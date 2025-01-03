@@ -40,11 +40,12 @@ float4 main(VertexToPixel input) : SV_TARGET
 {
 	ShaderEntity light = load_entity(spotlights().first_item() + (uint)g_xColor.x);
 
-	float2 ScreenCoord = input.pos2D.xy / input.pos2D.w * float2(0.5f, -0.5f) + 0.5f;
+	float2 ScreenCoord = input.pos2D.xy / input.pos2D.w * float2(0.5, -0.5) + 0.5;
 	float4 depths = texture_depth.GatherRed(sampler_point_clamp, ScreenCoord);
 	float depth = max(input.pos.z, max(depths.x, max(depths.y, max(depths.z, depths.w))));
 	float3 P = reconstruct_position(ScreenCoord, depth);
-	float3 V = GetCamera().position - P;
+	float3 nearP = GetCamera().frustum_corners.screen_to_nearplane(ScreenCoord);
+	float3 V = nearP - P; // ortho support
 	float cameraDistance = length(V);
 	V /= cameraDistance;
 
@@ -62,7 +63,7 @@ float4 main(VertexToPixel input) : SV_TARGET
 	}
 
 	float marchedDistance = 0;
-	float3 accumulation = 0;
+	half3 accumulation = 0;
 
 	float3 rayEnd = GetCamera().position;
 
@@ -74,12 +75,13 @@ float4 main(VertexToPixel input) : SV_TARGET
 		float2 sina2_cosa2 = unpack_half2(asuint(g_xColor.z));
 		if(intersectInfiniteCone(GetCamera().position, -V, light.position, light.GetDirection(), sina2_cosa2.x, sina2_cosa2.y, tnear, tfar))
 		{
-			rayEnd = GetCamera().position - V * max(0, tnear);
+			rayEnd = nearP - V * max(0, tnear);
 			//return float4(1,0,0,1);
 		}
 	}
 	
 	const uint sampleCount = 16;
+	const half sampleCount_rcp = rcp((half)sampleCount);
 	const float stepSize = distance(rayEnd, P) / sampleCount;
 
 	// dither ray start to help with undersampling:
@@ -90,19 +92,19 @@ float4 main(VertexToPixel input) : SV_TARGET
 	for (uint i = 0; i < sampleCount; ++i)
 	{
 		float3 L = light.position - P;
-		const float dist2 = dot(L, L);
-		const float dist = sqrt(dist2);
+		const half dist2 = dot(L, L);
+		const half dist = sqrt(dist2);
 		L /= dist;
 
-		const float spot_factor = dot(L, light.GetDirection());
-		const float spot_cutoff = light.GetConeAngleCos();
+		const half spot_factor = dot(L, light.GetDirection());
+		const half spot_cutoff = light.GetConeAngleCos();
 
 		[branch]
 		if (spot_factor > spot_cutoff)
 		{
-			const float range = light.GetRange();
-			const float range2 = range * range;
-			float3 attenuation = attenuation_spotlight(dist2, range, range2, spot_factor, light.GetAngleScale(), light.GetAngleOffset());
+			const half range = light.GetRange();
+			const half range2 = range * range;
+			half3 attenuation = attenuation_spotlight(dist2, range, range2, spot_factor, light.GetAngleScale(), light.GetAngleOffset());
 
 			[branch]
 			if (light.IsCastingShadow())
@@ -118,7 +120,7 @@ float4 main(VertexToPixel input) : SV_TARGET
 			}
 
 			// Evaluate sample height for exponential fog calculation, given 0 for V:
-			attenuation *= g_xColor.y + GetFogAmount(cameraDistance - marchedDistance, P, float3(0.0, 0.0, 0.0));
+			attenuation *= g_xColor.y + GetFogAmount(cameraDistance - marchedDistance, P, 0);
 			attenuation *= ComputeScattering(saturate(dot(L, -V)));
 
 			accumulation += attenuation;
@@ -128,7 +130,7 @@ float4 main(VertexToPixel input) : SV_TARGET
 		P = P + V * stepSize;
 	}
 
-	accumulation /= sampleCount;
+	accumulation *= sampleCount_rcp;
 
-	return max(0, float4(accumulation * light.GetColor().rgb, 1));
+	return max(0, half4(accumulation * light.GetColor().rgb, 1));
 }

@@ -22,11 +22,16 @@
 #include <iostream>
 #include <cstdlib>
 
+#ifdef PLATFORM_LINUX
+#include <sys/sysinfo.h>
+#endif
+
 #if defined(_WIN32)
 #include <direct.h>
 #include <Psapi.h> // GetProcessMemoryInfo
 #include <Commdlg.h> // openfile
 #include <WinBase.h>
+#include <comdef.h> // com_error
 #elif defined(PLATFORM_PS5)
 #else
 #include "Utility/portable-file-dialogs.h"
@@ -955,7 +960,14 @@ namespace wi::helper
 #define ToNativeString(x) (x)
 #endif // _WIN32
 
-	std::string GetPathRelative(const std::string& rootdir, std::string& path)
+	std::string FromWString(const std::wstring& fileName)
+	{
+		std::string fileName_u8;
+		StringConvert(fileName, fileName_u8);
+		return fileName_u8;
+	}
+
+	std::string GetPathRelative(const std::string& rootdir, const std::string& path)
 	{
 		std::string ret = path;
 		MakePathRelative(rootdir, ret);
@@ -976,7 +988,7 @@ namespace wi::helper
 			std::filesystem::path relative = std::filesystem::relative(filepath, rootpath);
 			if (!relative.empty())
 			{
-				path = relative.generic_u8string();
+				StringConvert(relative.generic_wstring(), path);
 			}
 		}
 
@@ -987,7 +999,7 @@ namespace wi::helper
 		std::filesystem::path absolute = std::filesystem::absolute(ToNativeString(path));
 		if (!absolute.empty())
 		{
-			path = absolute.generic_u8string();
+			StringConvert(absolute.generic_wstring(), path);
 		}
 	}
 
@@ -1076,7 +1088,7 @@ namespace wi::helper
 		return "";
 #else
 		auto path = std::filesystem::temp_directory_path();
-		return path.generic_u8string();
+		return FromWString(path.generic_wstring());
 #endif // PLATFORM_XBOX || PLATFORM_PS5
 	}
 
@@ -1106,7 +1118,7 @@ namespace wi::helper
 		return "/app0";
 #else
 		auto path = std::filesystem::current_path();
-		return path.generic_u8string();
+		return FromWString(path.generic_wstring());
 #endif // PLATFORM_PS5
 	}
 
@@ -1250,7 +1262,7 @@ namespace wi::helper
 		{
 			if (entry.is_directory())
 				continue;
-			std::string filename = entry.path().filename().generic_u8string();
+			std::string filename = FromWString(entry.path().filename().generic_wstring());
 			if (filter_extension.empty() || wi::helper::toUpper(wi::helper::GetExtensionFromFileName(filename)).compare(wi::helper::toUpper(filter_extension)) == 0)
 			{
 				onSuccess(directory + filename);
@@ -1268,7 +1280,7 @@ namespace wi::helper
 		{
 			if (!entry.is_directory())
 				continue;
-			std::string filename = entry.path().filename().generic_u8string();
+			std::string filename = FromWString(entry.path().filename().generic_wstring());
 			onSuccess(directory + filename);
 		}
 	}
@@ -1384,12 +1396,15 @@ namespace wi::helper
 		default:
 		case DebugLevel::Normal:
 			std::cout << str;
+			std::flush(std::cout);
 			break;
 		case DebugLevel::Warning:
 			std::clog << str;
+			std::flush(std::clog);
 			break;
 		case DebugLevel::Error:
 			std::cerr << str;
+			std::flush(std::cerr);
 			break;
 	}
 #endif // _WIN32
@@ -1459,8 +1474,32 @@ namespace wi::helper
 		mem.process_physical = pmc.WorkingSetSize;
 		mem.process_virtual = pmc.PrivateUsage;
 #elif defined(PLATFORM_LINUX)
-		// TODO Linux
-#endif // _WIN32
+		struct sysinfo info;
+		constexpr int PAGE_SIZE = 4096;
+		if (sysinfo(&info) == 0)
+		{
+			unsigned long phys = info.totalram - info.totalswap;
+			mem.total_physical = phys * info.mem_unit;
+			mem.total_virtual = info.totalswap * info.mem_unit;
+		}
+		unsigned long l;
+		std::ifstream statm("/proc/self/statm");
+		// Format of statm:
+		// size resident shared trs lrs drs dt
+		// see linux Documentation/filesystems/proc.rst
+
+		// we want "resident", the second number, so just read the first one
+		// and discard it
+		statm >> l;
+		statm >> l;
+		mem.process_physical = l * PAGE_SIZE;
+		// there doesn't seem to be an easy way to determine
+		// swapped out memory
+#elif defined(PLATFORM_PS5)
+		wi::graphics::GraphicsDevice::MemoryUsage gpumem = wi::graphics::GetDevice()->GetMemoryUsage();
+		mem.process_physical = mem.total_physical = gpumem.budget;
+		mem.process_virtual = mem.total_virtual = gpumem.usage;
+#endif // defined(_WIN32)
 		return mem;
 	}
 
@@ -1508,5 +1547,22 @@ namespace wi::helper
 			ss << timerSeconds / 60 / 60 << " hours";
 		}
 		return ss.str();
+	}
+
+	std::string GetPlatformErrorString(wi::platform::error_type code)
+	{
+		std::string str;
+
+#ifdef _WIN32
+		_com_error err(code);
+		LPCTSTR errMsg = err.ErrorMessage();
+		wchar_t wtext[1024] = {};
+		_snwprintf_s(wtext, arraysize(wtext), arraysize(wtext), L"0x%08x (%s)", code, errMsg);
+		char text[1024] = {};
+		wi::helper::StringConvert(wtext, text, arraysize(text));
+		str = text;
+#endif // _WIN32
+
+		return str;
 	}
 }

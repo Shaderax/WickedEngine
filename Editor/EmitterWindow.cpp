@@ -7,8 +7,8 @@ using namespace wi::scene;
 void EmitterWindow::Create(EditorComponent* _editor)
 {
 	editor = _editor;
-	wi::gui::Window::Create(ICON_EMITTER " Emitter", wi::gui::Window::WindowControls::COLLAPSE | wi::gui::Window::WindowControls::CLOSE);
-	SetSize(XMFLOAT2(300, 1080));
+	wi::gui::Window::Create(ICON_EMITTER " Emitter", wi::gui::Window::WindowControls::COLLAPSE | wi::gui::Window::WindowControls::CLOSE | wi::gui::Window::WindowControls::FIT_ALL_WIDGETS_VERTICAL);
+	SetSize(XMFLOAT2(300, 1120));
 
 	closeButton.SetTooltip("Delete EmittedParticleSystem");
 	OnClose([=](wi::gui::EventArgs args) {
@@ -61,7 +61,7 @@ void EmitterWindow::Create(EditorComponent* _editor)
 	AddWidget(&burstButton);
 
 	burstCountInput.Create("");
-	burstCountInput.SetValue(100);
+	burstCountInput.SetValue(10);
 	burstCountInput.SetSize(XMFLOAT2(itemheight * 4, itemheight));
 	burstCountInput.SetCancelInputEnabled(false);
 	burstCountInput.SetTooltip("Specify burst count (number of particles to burst).");
@@ -282,7 +282,7 @@ void EmitterWindow::Create(EditorComponent* _editor)
 	frameRateInput.SetPos(XMFLOAT2(x, y));
 	frameRateInput.SetSize(XMFLOAT2(38, 18));
 	frameRateInput.SetText("");
-	frameRateInput.SetTooltip("Enter a value to enable looping sprite sheet animation (frames per second). Set 0 for animation along paritcle lifetime.");
+	frameRateInput.SetTooltip("Enter a value to enable looping sprite sheet animation (frames per second). Set 0 for exactly one complete animation along particle lifetime.");
 	frameRateInput.SetDescription("Frame Rate: ");
 	frameRateInput.OnInputAccepted([this](wi::gui::EventArgs args) {
 		wi::scene::Scene& scene = editor->GetCurrentScene();
@@ -335,7 +335,7 @@ void EmitterWindow::Create(EditorComponent* _editor)
 	frameCountInput.SetPos(XMFLOAT2(x, y += step));
 	frameCountInput.SetSize(XMFLOAT2(38, 18));
 	frameCountInput.SetText("");
-	frameCountInput.SetTooltip("Enter a value to enable the random sprite sheet frame selection's max frame number.");
+	frameCountInput.SetTooltip("The total number of frames in the sprite sheet animation.");
 	frameCountInput.SetDescription("Frame Count: ");
 	frameCountInput.OnInputAccepted([this](wi::gui::EventArgs args) {
 		wi::scene::Scene& scene = editor->GetCurrentScene();
@@ -595,6 +595,36 @@ void EmitterWindow::Create(EditorComponent* _editor)
 	emitLifeSlider.SetTooltip("Set the lifespan of the emitted particles (in seconds).");
 	AddWidget(&emitLifeSlider);
 
+	emitOpacityCurveStartSlider.Create(0.0f, 1.0f, 0.0f, 10000, "Opacity Start: ");
+	emitOpacityCurveStartSlider.OnSlide([&](wi::gui::EventArgs args) {
+		wi::scene::Scene& scene = editor->GetCurrentScene();
+		for (auto& x : editor->translator.selected)
+		{
+			wi::EmittedParticleSystem* emitter = scene.emitters.GetComponent(x.entity);
+			if (emitter == nullptr)
+				continue;
+			emitter->SetOpacityCurveControl(args.fValue, emitter->opacityCurveControlPeakEnd);
+		}
+		});
+	emitOpacityCurveStartSlider.SetEnabled(false);
+	emitOpacityCurveStartSlider.SetTooltip("Set where the opacity should become full, relative to particle lifetime.");
+	AddWidget(&emitOpacityCurveStartSlider);
+
+	emitOpacityCurveEndSlider.Create(0.0f, 1.0f, 0.0f, 10000, "Opacity End: ");
+	emitOpacityCurveEndSlider.OnSlide([&](wi::gui::EventArgs args) {
+		wi::scene::Scene& scene = editor->GetCurrentScene();
+		for (auto& x : editor->translator.selected)
+		{
+			wi::EmittedParticleSystem* emitter = scene.emitters.GetComponent(x.entity);
+			if (emitter == nullptr)
+				continue;
+			emitter->SetOpacityCurveControl(emitter->opacityCurveControlPeakStart, args.fValue);
+		}
+		});
+	emitOpacityCurveEndSlider.SetEnabled(false);
+	emitOpacityCurveEndSlider.SetTooltip("Set where the opacity should begin to decay, relative to particle lifetime.");
+	AddWidget(&emitOpacityCurveEndSlider);
+
 	emitRandomnessSlider.Create(0.0f, 1.0f, 1.0f, 100000, "Randomness: ");
 	emitRandomnessSlider.SetSize(XMFLOAT2(wid, itemheight));
 	emitRandomnessSlider.SetPos(XMFLOAT2(x, y += step));
@@ -849,6 +879,8 @@ void EmitterWindow::SetEntity(Entity entity)
 		emitNormalSlider.SetValue(emitter->normal_factor);
 		emitScalingSlider.SetValue(emitter->scaleX);
 		emitLifeSlider.SetValue(emitter->life);
+		emitOpacityCurveStartSlider.SetValue(emitter->opacityCurveControlPeakStart);
+		emitOpacityCurveEndSlider.SetValue(emitter->opacityCurveControlPeakEnd);
 		emitRandomnessSlider.SetValue(emitter->random_factor);
 		emitLifeRandomnessSlider.SetValue(emitter->random_life);
 		emitColorRandomnessSlider.SetValue(emitter->random_color);
@@ -933,6 +965,23 @@ void EmitterWindow::UpdateData()
 
 	infoLabel.SetText(ss);
 
+	for (auto& x : emitOpacityCurveStartSlider.sprites)
+	{
+		x.textureResource.SetTexture(*emitter->GetOpacityCurveTex());
+	}
+	emitOpacityCurveStartSlider.SetColor(wi::Color::White(), wi::gui::WIDGET_ID_SLIDER_BASE_IDLE);
+	emitOpacityCurveStartSlider.SetColor(wi::Color::White(), wi::gui::WIDGET_ID_SLIDER_BASE_FOCUS);
+	emitOpacityCurveStartSlider.SetColor(wi::Color::White(), wi::gui::WIDGET_ID_SLIDER_BASE_ACTIVE);
+	emitOpacityCurveStartSlider.SetColor(wi::Color::White(), wi::gui::WIDGET_ID_SLIDER_BASE_DEACTIVATING);
+
+	for (auto& x : emitOpacityCurveEndSlider.sprites)
+	{
+		x.textureResource.SetTexture(*emitter->GetOpacityCurveTex());
+	}
+	emitOpacityCurveEndSlider.SetColor(wi::Color::White(), wi::gui::WIDGET_ID_SLIDER_BASE_IDLE);
+	emitOpacityCurveEndSlider.SetColor(wi::Color::White(), wi::gui::WIDGET_ID_SLIDER_BASE_FOCUS);
+	emitOpacityCurveEndSlider.SetColor(wi::Color::White(), wi::gui::WIDGET_ID_SLIDER_BASE_ACTIVE);
+	emitOpacityCurveEndSlider.SetColor(wi::Color::White(), wi::gui::WIDGET_ID_SLIDER_BASE_DEACTIVATING);
 }
 
 void EmitterWindow::ResizeLayout()
@@ -944,7 +993,7 @@ void EmitterWindow::ResizeLayout()
 	float jump = 20;
 
 	const float margin_left = 130;
-	const float margin_right = 40;
+	const float margin_right = 45;
 
 	auto add = [&](wi::gui::Widget& widget) {
 		if (!widget.IsVisible())
@@ -996,6 +1045,8 @@ void EmitterWindow::ResizeLayout()
 	add(emitNormalSlider);
 	add(emitScalingSlider);
 	add(emitLifeSlider);
+	add(emitOpacityCurveStartSlider);
+	add(emitOpacityCurveEndSlider);
 	add(emitLifeRandomnessSlider);
 	add(emitRandomnessSlider);
 	add(emitColorRandomnessSlider);

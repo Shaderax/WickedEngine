@@ -373,8 +373,9 @@ namespace wi::scene
 		GraphicsDevice* device = wi::graphics::GetDevice();
 		for (int i = 0; i < TEXTURESLOT_COUNT; ++i)
 		{
-			material.textures[i].uvset_lodclamp = (textures[i].uvset & 1) | (XMConvertFloatToHalf(textures[i].lod_clamp) << 1u);
-			if (textures[i].resource.IsValid())
+			const MaterialComponent::TextureMap& texturemap = textures[i];
+			material.textures[i].uvset_aniso_lodclamp = (texturemap.uvset & 1) | ((texturemap.virtual_anisotropy & 0x7F) << 1u) | (XMConvertFloatToHalf(texturemap.lod_clamp) << 16u);
+			if (texturemap.resource.IsValid())
 			{
 				int subresource = -1;
 				switch (i)
@@ -383,18 +384,18 @@ namespace wi::scene
 				case EMISSIVEMAP:
 				case SPECULARMAP:
 				case SHEENCOLORMAP:
-					subresource = textures[i].resource.GetTextureSRGBSubresource();
+					subresource = texturemap.resource.GetTextureSRGBSubresource();
 					break;
 				case SURFACEMAP:
 					if (IsUsingSpecularGlossinessWorkflow())
 					{
-						subresource = textures[i].resource.GetTextureSRGBSubresource();
+						subresource = texturemap.resource.GetTextureSRGBSubresource();
 					}
 					break;
 				default:
 					break;
 				}
-				material.textures[i].texture_descriptor = device->GetDescriptorIndex(textures[i].GetGPUResource(), SubresourceType::SRV, subresource);
+				material.textures[i].texture_descriptor = device->GetDescriptorIndex(texturemap.GetGPUResource(), SubresourceType::SRV, subresource);
 			}
 			else
 			{
@@ -768,6 +769,8 @@ namespace wi::scene
 		}
 
 		// Determine UV range for normalization:
+		size_t uv_stride = sizeof(Vertex_UVS);
+		Format uv_format = Vertex_UVS::FORMAT;
 		if (!vertex_uvset_0.empty() || !vertex_uvset_1.empty())
 		{
 			const XMFLOAT2* uv0_stream = vertex_uvset_0.empty() ? vertex_uvset_1.data() : vertex_uvset_0.data();
@@ -781,6 +784,13 @@ namespace wi::scene
 				uv_range_max = wi::math::Max(uv_range_max, uv1_stream[i]);
 				uv_range_min = wi::math::Min(uv_range_min, uv0_stream[i]);
 				uv_range_min = wi::math::Min(uv_range_min, uv1_stream[i]);
+			}
+
+			if (std::abs(uv_range_max.x - uv_range_min.x) > 65536 || std::abs(uv_range_max.y - uv_range_min.y) > 65536)
+			{
+				// The bounding box of UVs is too large, fall back to full precision UVs:
+				uv_stride = sizeof(Vertex_UVS32);
+				uv_format = Vertex_UVS32::FORMAT;
 			}
 		}
 
@@ -808,7 +818,7 @@ namespace wi::scene
 			AlignTo(indices.size() * GetIndexStride(), alignment) +
 			AlignTo(vertex_normals.size() * sizeof(Vertex_NOR), alignment) +
 			AlignTo(vertex_tangents.size() * sizeof(Vertex_TAN), alignment) +
-			AlignTo(uv_count * sizeof(Vertex_UVS), alignment) +
+			AlignTo(uv_count * uv_stride, alignment) +
 			AlignTo(vertex_atlas.size() * sizeof(Vertex_TEX), alignment) +
 			AlignTo(vertex_colors.size() * sizeof(Vertex_COL), alignment) +
 			AlignTo(vertex_boneindices.size() * sizeof(Vertex_BON), alignment) +
@@ -1057,15 +1067,30 @@ namespace wi::scene
 				const XMFLOAT2* uv1_stream = vertex_uvset_1.empty() ? vertex_uvset_0.data() : vertex_uvset_1.data();
 
 				vb_uvs.offset = buffer_offset;
-				vb_uvs.size = uv_count * sizeof(Vertex_UVS);
-				Vertex_UVS* vertices = (Vertex_UVS*)(buffer_data + buffer_offset);
-				buffer_offset += AlignTo(vb_uvs.size, alignment);
-				for (size_t i = 0; i < uv_count; ++i)
+				vb_uvs.size = uv_count * uv_stride;
+				if (uv_stride == sizeof(Vertex_UVS))
 				{
-					Vertex_UVS vert;
-					vert.uv0.FromFULL(uv0_stream[i], uv_range_min, uv_range_max);
-					vert.uv1.FromFULL(uv1_stream[i], uv_range_min, uv_range_max);
-					std::memcpy(vertices + i, &vert, sizeof(vert));
+					Vertex_UVS* vertices = (Vertex_UVS*)(buffer_data + buffer_offset);
+					buffer_offset += AlignTo(vb_uvs.size, alignment);
+					for (size_t i = 0; i < uv_count; ++i)
+					{
+						Vertex_UVS vert;
+						vert.uv0.FromFULL(uv0_stream[i], uv_range_min, uv_range_max);
+						vert.uv1.FromFULL(uv1_stream[i], uv_range_min, uv_range_max);
+						std::memcpy(vertices + i, &vert, sizeof(vert));
+					}
+				}
+				else
+				{
+					Vertex_UVS32* vertices = (Vertex_UVS32*)(buffer_data + buffer_offset);
+					buffer_offset += AlignTo(vb_uvs.size, alignment);
+					for (size_t i = 0; i < uv_count; ++i)
+					{
+						Vertex_UVS32 vert;
+						vert.uv0.FromFULL(uv0_stream[i], uv_range_min, uv_range_max);
+						vert.uv1.FromFULL(uv1_stream[i], uv_range_min, uv_range_max);
+						std::memcpy(vertices + i, &vert, sizeof(vert));
+					}
 				}
 			}
 
@@ -1266,7 +1291,7 @@ namespace wi::scene
 		}
 		if (vb_uvs.IsValid())
 		{
-			vb_uvs.subresource_srv = device->CreateSubresource(&generalBuffer, SubresourceType::SRV, vb_uvs.offset, vb_uvs.size, &Vertex_UVS::FORMAT);
+			vb_uvs.subresource_srv = device->CreateSubresource(&generalBuffer, SubresourceType::SRV, vb_uvs.offset, vb_uvs.size, &uv_format);
 			vb_uvs.descriptor_srv = device->GetDescriptorIndex(&generalBuffer, SubresourceType::SRV, vb_uvs.subresource_srv);
 		}
 		if (vb_atl.IsValid())
@@ -1926,7 +1951,8 @@ namespace wi::scene
 
 	void ObjectComponent::ClearLightmap()
 	{
-		lightmap = Texture();
+		lightmap_render = {};
+		lightmap = {};
 		lightmapWidth = 0;
 		lightmapHeight = 0;
 		lightmapIterationCount = 0;
@@ -1935,7 +1961,8 @@ namespace wi::scene
 	}
 	void ObjectComponent::SaveLightmap()
 	{
-		if (lightmap.IsValid() && has_flag(lightmap.desc.bind_flags, BindFlag::RENDER_TARGET))
+		lightmap_render = {};
+		if (lightmap.IsValid() && has_flag(lightmap.desc.bind_flags, BindFlag::UNORDERED_ACCESS))
 		{
 			SetLightmapRenderRequest(false);
 
@@ -1968,8 +1995,8 @@ namespace wi::scene
 
 					// Create a denoising filter
 					oidn::FilterRef filter = device.newFilter("RTLightmap");
-					filter.setImage("color", lightmapTextureData_buffer, oidn::Format::Float3, width, height, 0, sizeof(XMFLOAT4));
-					filter.setImage("output", texturedata_dst_buffer, oidn::Format::Float3, width, height, 0, sizeof(XMFLOAT4));
+					filter.setImage("color", lightmapTextureData_buffer, oidn::Format::Half3, width, height, 0, sizeof(XMHALF4));
+					filter.setImage("output", texturedata_dst_buffer, oidn::Format::Half3, width, height, 0, sizeof(XMHALF4));
 					filter.commit();
 
 					// Filter the image
@@ -2007,12 +2034,12 @@ namespace wi::scene
 			wi::vector<uint8_t> packed_data;
 			packed_data.resize(sizeof(XMFLOAT3PK) * lightmapWidth * lightmapHeight);
 			XMFLOAT3PK* packed_ptr = (XMFLOAT3PK*)packed_data.data();
-			XMFLOAT4* raw_ptr = (XMFLOAT4*)lightmapTextureData.data();
+			XMHALF4* raw_ptr = (XMHALF4*)lightmapTextureData.data();
 
 			uint32_t texelcount = lightmapWidth * lightmapHeight;
 			for (uint32_t i = 0; i < texelcount; ++i)
 			{
-				XMStoreFloat3PK(packed_ptr + i, XMLoadFloat4(raw_ptr + i));
+				XMStoreFloat3PK(packed_ptr + i, XMLoadHalf4(raw_ptr + i));
 			}
 
 			lightmapTextureData = std::move(packed_data);
@@ -2387,6 +2414,20 @@ namespace wi::scene
 		}
 	}
 
+	void CameraComponent::CreateOrtho(float newWidth, float newHeight, float newNear, float newFar, float newVerticalSize)
+	{
+		zNearP = newNear;
+		zFarP = newFar;
+		width = newWidth;
+		height = newHeight;
+		ortho_vertical_size = newVerticalSize;
+
+		SetCustomProjectionEnabled(false);
+		SetOrtho(true);
+		SetDirty();
+
+		UpdateCamera();
+	}
 	void CameraComponent::CreatePerspective(float newWidth, float newHeight, float newNear, float newFar, float newFOV)
 	{
 		zNearP = newNear;
@@ -2396,16 +2437,48 @@ namespace wi::scene
 		fov = newFOV;
 
 		SetCustomProjectionEnabled(false);
+		SetOrtho(false);
+		SetDirty();
 
 		UpdateCamera();
+	}
+	inline float compute_inverse_lineardepth(float lin, float znear, float zfar)
+	{
+		float z_n = ((lin - 2 * zfar) * znear + zfar * lin) / (lin * znear - zfar * lin);
+		float z = (z_n + 1) * 0.5f;
+		return z;
+	}
+	float CameraComponent::ComputeOrthoVerticalSizeFromPerspective(float dist)
+	{
+		dist = std::abs(dist);
+		float z = compute_inverse_lineardepth(dist, zNearP, zFarP);
+		XMMATRIX P = XMMatrixPerspectiveFovLH(fov, width / height, zFarP, zNearP); // reverse zbuffer!
+		XMMATRIX Unproj = XMMatrixInverse(nullptr, P);
+		XMVECTOR Ptop = XMVector3TransformCoord(XMVectorSet(0, 1, z, 1), Unproj);
+		XMVECTOR Pbottom = XMVector3TransformCoord(XMVectorSet(0, -1, z, 1), Unproj);
+		return XMVectorGetX(XMVector3Length(Ptop - Pbottom));
 	}
 	void CameraComponent::UpdateCamera()
 	{
 		if (!IsCustomProjectionEnabled())
 		{
-			XMStoreFloat4x4(&Projection, XMMatrixPerspectiveFovLH(fov, width / height, zFarP, zNearP)); // reverse zbuffer!
-			Projection.m[2][0] = jitter.x;
-			Projection.m[2][1] = jitter.y;
+			XMMATRIX P;
+
+			if (IsOrtho())
+			{
+				float aspect = width / height;
+				float ortho_width = ortho_vertical_size * aspect;
+				float ortho_height = ortho_vertical_size;
+				P = XMMatrixOrthographicLH(ortho_width, ortho_height, zFarP, zNearP); // reverse zbuffer!
+			}
+			else
+			{
+				P = XMMatrixPerspectiveFovLH(fov, width / height, zFarP, zNearP); // reverse zbuffer!
+			}
+
+			P = P * XMMatrixTranslation(jitter.x, jitter.y, 0);
+
+			XMStoreFloat4x4(&Projection, P);
 		}
 
 		XMVECTOR _Eye = XMLoadFloat3(&Eye);
@@ -2557,7 +2630,7 @@ namespace wi::scene
 		if (dot < 0)
 		{
 			// help with turning around 180 degrees:
-			XMStoreFloat3(&facing, XMVector3TransformNormal(F, XMMatrixRotationY(XM_PI * 0.01f)));
+			XMStoreFloat3(&facing, XMVector3TransformNormal(F, XMMatrixRotationY(XM_PI * 0.05f)));
 		}
 		facing_next = direction;
 	}
@@ -2616,7 +2689,7 @@ namespace wi::scene
 	}
 	Capsule CharacterComponent::GetCapsule() const
 	{
-		return Capsule(Sphere(position, width), height);
+		return Capsule(position, XMFLOAT3(position.x, position.y + height, position.z), width);
 	}
 	void CharacterComponent::SetFacing(const XMFLOAT3& value)
 	{

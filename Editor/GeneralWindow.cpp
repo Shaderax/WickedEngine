@@ -436,6 +436,11 @@ void GeneralWindow::Create(EditorComponent* _editor)
 		editor->newEntityCombo.SetAngularHighlightColor(highlight);
 		editor->componentsWnd.newComponentCombo.SetAngularHighlightColor(highlight);
 		editor->componentsWnd.materialWnd.textureSlotButton.SetColor(wi::Color::White(), wi::gui::IDLE);
+		editor->componentsWnd.objectWnd.lightmapPreviewButton.SetColor(wi::Color::White());
+		for (auto& x : editor->componentsWnd.objectWnd.lightmapPreviewButton.sprites)
+		{
+			x.params.disableBackground();
+		}
 		editor->componentsWnd.spriteWnd.textureButton.SetColor(wi::Color::White(), wi::gui::IDLE);
 		editor->paintToolWnd.brushTextureButton.SetColor(wi::Color::White(), wi::gui::IDLE);
 		editor->paintToolWnd.revealTextureButton.SetColor(wi::Color::White(), wi::gui::IDLE);
@@ -659,6 +664,23 @@ void GeneralWindow::Create(EditorComponent* _editor)
 			sprite.params.corners_rounding[3].radius = 10;
 		}
 
+		for (auto& x : editor->componentsWnd.hairWnd.sprites)
+		{
+			x.SetColor(wi::Color::White(), wi::gui::IDLE);
+		}
+		for (auto& x : editor->componentsWnd.hairWnd.spriteRemoveButtons)
+		{
+			x.sprites[wi::gui::FOCUS].params.color = wi::Color::Error();
+			for (auto& sprite : x.sprites)
+			{
+				sprite.params.enableCornerRounding();
+				sprite.params.corners_rounding[1].radius = 10;
+				sprite.params.corners_rounding[3].radius = 10;
+			}
+		}
+		editor->componentsWnd.hairWnd.spriterectwnd.spriteButton.SetColor(wi::Color::White());
+		editor->componentsWnd.hairWnd.spriterectwnd.SetShadowRadius(5);
+
 		editor->componentsWnd.transformWnd.resetRotationButton.SetColor(wi::Color::Error(), wi::gui::WIDGETSTATE::FOCUS);
 		for (auto& sprite : editor->componentsWnd.transformWnd.resetRotationButton.sprites)
 		{
@@ -690,6 +712,16 @@ void GeneralWindow::Create(EditorComponent* _editor)
 		{
 			editor->aboutLabel.sprites[i].params.disableBackground();
 			editor->aboutLabel.sprites[i].params.blendFlag = wi::enums::BLENDMODE_ALPHA;
+		}
+
+		editor->guiScalingCombo.SetShadowRadius(0);
+		for (auto& sprite : editor->guiScalingCombo.sprites)
+		{
+			sprite.params.enableCornerRounding();
+			sprite.params.corners_rounding[0].radius = 10;
+			sprite.params.corners_rounding[1].radius = 10;
+			sprite.params.corners_rounding[2].radius = 10;
+			sprite.params.corners_rounding[3].radius = 10;
 		}
 
 	});
@@ -726,6 +758,8 @@ void GeneralWindow::Create(EditorComponent* _editor)
 			for (auto& x : material.textures)
 			{
 				if (x.GetGPUResource() == nullptr)
+					continue;
+				if (has_flag(x.resource.GetTexture().GetDesc().misc_flags, ResourceMiscFlag::SPARSE))
 					continue;
 				if (wi::helper::GetExtensionFromFileName(x.name).compare("DDS"))
 				{
@@ -769,6 +803,8 @@ void GeneralWindow::Create(EditorComponent* _editor)
 			for (auto& x : material.textures)
 			{
 				if (x.GetGPUResource() == nullptr)
+					continue;
+				if (has_flag(x.resource.GetTexture().GetDesc().misc_flags, ResourceMiscFlag::SPARSE))
 					continue;
 				if (wi::helper::GetExtensionFromFileName(x.name).compare("KTX2"))
 				{

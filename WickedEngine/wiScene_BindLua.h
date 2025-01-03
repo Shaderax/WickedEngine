@@ -328,6 +328,8 @@ namespace wi::lua::scene
 		int SetNearPlane(lua_State* L);
 		int GetFarPlane(lua_State* L);
 		int SetFarPlane(lua_State* L);
+		int GetOrthoVerticalSize(lua_State* L);
+		int SetOrthoVerticalSize(lua_State* L);
 		int GetFocalLength(lua_State* L);
 		int SetFocalLength(lua_State* L);
 		int GetApertureSize(lua_State* L);
@@ -347,6 +349,8 @@ namespace wi::lua::scene
 		int SetPosition(lua_State* L);
 		int SetLookDirection(lua_State* L);
 		int SetUpDirection(lua_State* L);
+		int SetOrtho(lua_State* L);
+		int IsOrtho(lua_State* L);
 	};
 
 	class AnimationComponent_BindLua
@@ -509,6 +513,8 @@ namespace wi::lua::scene
 		int GetStencilRef(lua_State* L);
 		int SetCastShadow(lua_State* L);
 		int IsCastingShadow(lua_State* L);
+		int SetCoplanarBlending(lua_State* L);
+		int IsCoplanarBlending(lua_State* L);
 
 		int SetTexture(lua_State* L);
 		int SetTextureUVSet(lua_State* L);
@@ -695,10 +701,10 @@ namespace wi::lua::scene
 			Randomness = FloatProperty(&component->randomness);
 			ViewDistance = FloatProperty(&component->viewDistance);
 		
-			SpriteSheet_Frames_X = LongLongProperty(reinterpret_cast<long long*>(&component->framesX));
-			SpriteSheet_Frames_Y = LongLongProperty(reinterpret_cast<long long*>(&component->framesY));
-			SpriteSheet_Frame_Count = LongLongProperty(reinterpret_cast<long long*>(&component->frameCount));
-			SpriteSheet_Frame_Start = LongLongProperty(reinterpret_cast<long long*>(&component->frameStart));
+			//SpriteSheet_Frames_X = LongLongProperty(reinterpret_cast<long long*>(&component->framesX));
+			//SpriteSheet_Frames_Y = LongLongProperty(reinterpret_cast<long long*>(&component->framesY));
+			//SpriteSheet_Frame_Count = LongLongProperty(reinterpret_cast<long long*>(&component->frameCount));
+			//SpriteSheet_Frame_Start = LongLongProperty(reinterpret_cast<long long*>(&component->frameStart));
 		}
 
 		HairParticleSystem_BindLua(HairParticleSystem* component) :component(component)
@@ -807,6 +813,7 @@ namespace wi::lua::scene
 		int IsNotVisibleInMainCamera(lua_State* L);
 		int IsNotVisibleInReflections(lua_State* L);
 		int IsWetmapEnabled(lua_State* L);
+		int IsRenderable(lua_State* L);
 
 		int SetMeshID(lua_State* L);
 		int SetCascadeMask(lua_State* L);
@@ -824,6 +831,7 @@ namespace wi::lua::scene
 		int SetNotVisibleInMainCamera(lua_State* L);
 		int SetNotVisibleInReflections(lua_State* L);
 		int SetWetmapEnabled(lua_State* L);
+		int SetRenderable(lua_State* L);
 	};
 
 	class InverseKinematicsComponent_BindLua
@@ -1092,6 +1100,10 @@ namespace wi::lua::scene
 			wind_speed = FloatProperty(&parameter->wind_speed);
 			wind_dependency = FloatProperty(&parameter->wind_dependency);
 			choppy_scale = FloatProperty(&parameter->choppy_scale);
+			waterColor = VectorProperty(&parameter->waterColor);
+			waterHeight = FloatProperty(&parameter->waterHeight);
+			//surfaceDetail = IntProperty(&parameter->surfaceDetail);
+			surfaceDisplacementTolerance = FloatProperty(&parameter->surfaceDisplacementTolerance);
 		}
 
 		Weather_OceanParams_BindLua(wi::Ocean::OceanParameters* parameter) :parameter(parameter)
@@ -1113,8 +1125,8 @@ namespace wi::lua::scene
 		FloatProperty choppy_scale;
 		VectorProperty waterColor;
 		FloatProperty waterHeight;
-		LongLongProperty surfaceDetail;
-		FloatProperty surfaceDisplacement;
+		IntProperty surfaceDetail;
+		FloatProperty surfaceDisplacementTolerance;
 
 		PropertyFunction(dmap_dim)
 		PropertyFunction(patch_length)
@@ -1127,7 +1139,7 @@ namespace wi::lua::scene
 		PropertyFunction(waterColor)
 		PropertyFunction(waterHeight)
 		PropertyFunction(surfaceDetail)
-		PropertyFunction(surfaceDisplacement)
+		PropertyFunction(surfaceDisplacementTolerance)
 	};
 	struct Weather_OceanParams_Property
 	{

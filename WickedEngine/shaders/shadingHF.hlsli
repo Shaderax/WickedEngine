@@ -12,11 +12,11 @@ inline void LightMapping(in int lightmap, in float2 ATLAS, inout Lighting lighti
 	[branch]
 	if (lightmap >= 0)
 	{
-		Texture2D<float4> texture_lightmap = bindless_textures[NonUniformResourceIndex(lightmap)];
+		Texture2D<half4> texture_lightmap = bindless_textures_half4[NonUniformResourceIndex(lightmap)];
 #ifdef LIGHTMAP_QUALITY_BICUBIC
-		lighting.indirect.diffuse = (half3)SampleTextureCatmullRom(texture_lightmap, sampler_linear_clamp, ATLAS).rgb;
+		lighting.indirect.diffuse = SampleTextureCatmullRom(texture_lightmap, sampler_linear_clamp, ATLAS).rgb;
 #else
-		lighting.indirect.diffuse = (half3)texture_lightmap.SampleLevel(sampler_linear_clamp, ATLAS, 0).rgb;
+		lighting.indirect.diffuse = texture_lightmap.SampleLevel(sampler_linear_clamp, ATLAS, 0).rgb;
 #endif // LIGHTMAP_QUALITY_BICUBIC
 
 		surface.SetGIApplied(true);
@@ -31,7 +31,7 @@ inline half3 PlanarReflection(in Surface surface, in half2 bumpColor)
 		float4 reflectionUV = mul(GetCamera().reflection_view_projection, float4(surface.P, 1));
 		reflectionUV.xy /= reflectionUV.w;
 		reflectionUV.xy = clipspace_to_uv(reflectionUV.xy);
-		return (half3)bindless_textures[GetCamera().texture_reflection_index].SampleLevel(sampler_linear_clamp, reflectionUV.xy + bumpColor, 0).rgb;
+		return bindless_textures_half4[GetCamera().texture_reflection_index].SampleLevel(sampler_linear_clamp, reflectionUV.xy + bumpColor, 0).rgb;
 	}
 	return 0;
 }
@@ -62,14 +62,14 @@ inline void ForwardLighting(inout Surface surface, inout Lighting lighting)
 			float4x4 probeProjection = load_entitymatrix(probe.GetMatrixIndex());
 			const int probeTexture = asint(probeProjection[3][0]);
 			probeProjection[3] = float4(0, 0, 0, 1);
-			TextureCube cubemap = bindless_cubemaps[probeTexture];
+			TextureCube<half4> cubemap = bindless_cubemaps_half4[probeTexture];
 			
-			const float3 clipSpacePos = mul(probeProjection, float4(surface.P, 1)).xyz;
-			const float3 uvw = clipspace_to_uv(clipSpacePos.xyz);
+			const half3 clipSpacePos = mul(probeProjection, float4(surface.P, 1)).xyz;
+			const half3 uvw = clipspace_to_uv(clipSpacePos.xyz);
 			[branch]
 			if (is_saturated(uvw))
 			{
-				const half4 envmapColor = (half4)EnvironmentReflection_Local(cubemap, surface, probe, probeProjection, clipSpacePos);
+				const half4 envmapColor = EnvironmentReflection_Local(cubemap, surface, probe, probeProjection, clipSpacePos);
 				// perform manual blending of probes:
 				//  NOTE: they are sorted top-to-bottom, but blending is performed bottom-to-top
 				envmapAccumulation.rgb = mad(1 - envmapAccumulation.a, envmapColor.a * envmapColor.rgb, envmapAccumulation.rgb);
@@ -129,6 +129,8 @@ inline void ForwardLighting(inout Surface surface, inout Lighting lighting)
 				bucket_bits ^= 1u << bucket_bit_index;
 
 				ShaderEntity light = load_entity(lights().first_item() + entity_index);
+				if (light.GetFlags() & ENTITY_FLAG_LIGHT_STATIC)
+					break; // static lights will be skipped here (they are used at lightmap baking)
 				
 				switch (light.GetType())
 				{
@@ -202,8 +204,8 @@ inline void ForwardDecals(inout Surface surface, inout half4 surfaceMap, Sampler
 			const float2 decalDY = mul(P_dy, (float3x3)decalProjection).xy;
 			half4 decalColor = decal.GetColor();
 			// blend out if close to cube Z:
-			const half edgeBlend = 1 - pow(saturate(abs(clipSpacePos.z)), 8);
-			const half slopeBlend = decal.GetConeAngleCos() > 0 ? pow(saturate(dot(surface.N, decal.GetDirection())), decal.GetConeAngleCos()) : 1;
+			const half edgeBlend = 1 - pow8(saturate(abs(clipSpacePos.z)));
+			const half slopeBlend = decal.GetConeAngleCos() > 0 ? pow(saturate(dot((half3)surface.N, decal.GetDirection())), decal.GetConeAngleCos()) : 1;
 			decalColor.a *= edgeBlend * slopeBlend;
 			[branch]
 			if (decalDisplacementmap >= 0)
@@ -218,7 +220,7 @@ inline void ForwardDecals(inout Surface surface, inout half4 surfaceMap, Sampler
 					surface.V,
 					tbn,
 					decal.GetLength(),
-					bindless_textures[decalDisplacementmap],
+					bindless_textures_half4[decalDisplacementmap],
 					uvw.xy,
 					decalDX,
 					decalDY,
@@ -229,7 +231,7 @@ inline void ForwardDecals(inout Surface surface, inout half4 surfaceMap, Sampler
 			[branch]
 			if (decalTexture >= 0)
 			{
-				decalColor *= (half4)bindless_textures[decalTexture].SampleGrad(sam, uvw.xy, decalDX, decalDY);
+				decalColor *= bindless_textures_half4[decalTexture].SampleGrad(sam, uvw.xy, decalDX, decalDY);
 				if ((decal.GetFlags() & ENTITY_FLAG_DECAL_BASECOLOR_ONLY_ALPHA) == 0)
 				{
 					// perform manual blending of decals:
@@ -241,7 +243,7 @@ inline void ForwardDecals(inout Surface surface, inout half4 surfaceMap, Sampler
 			[branch]
 			if (decalNormal >= 0)
 			{
-				half3 decalBumpColor = half3(bindless_textures[decalNormal].SampleGrad(sam, uvw.xy, decalDX, decalDY).rg, 1);
+				half3 decalBumpColor = half3(bindless_textures_half4[decalNormal].SampleGrad(sam, uvw.xy, decalDX, decalDY).rg, 1);
 				decalBumpColor = decalBumpColor * 2 - 1;
 				decalBumpColor.rg *= decal.GetAngleScale();
 				decalBumpAccumulation.rgb = mad(1 - decalBumpAccumulation.a, decalColor.a * decalBumpColor.rgb, decalBumpAccumulation.rgb);
@@ -250,7 +252,7 @@ inline void ForwardDecals(inout Surface surface, inout half4 surfaceMap, Sampler
 			[branch]
 			if (decalSurfacemap >= 0)
 			{
-				half4 decalSurfaceColor = (half4)bindless_textures[decalSurfacemap].SampleGrad(sam, uvw.xy, decalDX, decalDY);
+				half4 decalSurfaceColor = (half4)bindless_textures_half4[decalSurfacemap].SampleGrad(sam, uvw.xy, decalDX, decalDY);
 				decalSurfaceAccumulation = mad(1 - decalSurfaceAccumulationAlpha, decalColor.a * decalSurfaceColor, decalSurfaceAccumulation);
 				decalSurfaceAccumulationAlpha = mad(1 - decalColor.a, decalSurfaceAccumulationAlpha, decalColor.a);
 			}
@@ -263,9 +265,9 @@ inline void ForwardDecals(inout Surface surface, inout half4 surfaceMap, Sampler
 #endif // DISABLE_DECALS
 }
 
-inline uint GetFlatTileIndex(uint2 pixel)
+inline uint GetFlatTileIndex(min16uint2 pixel)
 {
-	const uint2 tileIndex = uint2(floor(pixel / TILED_CULLING_BLOCKSIZE));
+	const min16uint2 tileIndex = min16uint2(floor(pixel / TILED_CULLING_BLOCKSIZE));
 	return flatten2D(tileIndex, GetCamera().entity_culling_tilecount.xy) * SHADER_ENTITY_TILE_BUCKET_COUNT;
 }
 
@@ -284,13 +286,12 @@ inline void TiledLighting(inout Surface surface, inout Lighting lighting, uint f
 		for(uint bucket = iterator.first_bucket(); bucket <= iterator.last_bucket(); ++bucket)
 		{
 			uint bucket_bits = load_entitytile(flatTileIndex + bucket);
+			bucket_bits = iterator.mask_entity(bucket, bucket_bits);
 
 #ifndef ENTITY_TILE_UNIFORM
 			// Bucket scalarizer - Siggraph 2017 - Improved Culling [Michal Drobot]:
 			bucket_bits = WaveReadLaneFirst(WaveActiveBitOr(bucket_bits));
 #endif // ENTITY_TILE_UNIFORM
-
-			bucket_bits = iterator.mask_entity(bucket, bucket_bits);
 
 			[loop]
 			while (WaveActiveAnyTrue(bucket_bits != 0 && envmapAccumulation.a < 0.99))
@@ -305,14 +306,14 @@ inline void TiledLighting(inout Surface surface, inout Lighting lighting, uint f
 				float4x4 probeProjection = load_entitymatrix(probe.GetMatrixIndex());
 				const int probeTexture = asint(probeProjection[3][0]);
 				probeProjection[3] = float4(0, 0, 0, 1);
-				TextureCube cubemap = bindless_cubemaps[probeTexture];
+				TextureCube<half4> cubemap = bindless_cubemaps_half4[probeTexture];
 					
-				const float3 clipSpacePos = mul(probeProjection, float4(surface.P, 1)).xyz;
-				const float3 uvw = clipspace_to_uv(clipSpacePos.xyz);
+				const half3 clipSpacePos = mul(probeProjection, float4(surface.P, 1)).xyz;
+				const half3 uvw = clipspace_to_uv(clipSpacePos.xyz);
 				[branch]
 				if (is_saturated(uvw))
 				{
-					const half4 envmapColor = (half4)EnvironmentReflection_Local(cubemap, surface, probe, probeProjection, clipSpacePos);
+					const half4 envmapColor = EnvironmentReflection_Local(cubemap, surface, probe, probeProjection, clipSpacePos);
 					// perform manual blending of probes:
 					//  NOTE: they are sorted top-to-bottom, but blending is performed bottom-to-top
 					envmapAccumulation.rgb = mad(1 - envmapAccumulation.a, envmapColor.a * envmapColor.rgb, envmapAccumulation.rgb);
@@ -343,27 +344,27 @@ inline void TiledLighting(inout Surface surface, inout Lighting lighting, uint f
 	[branch]
 	if (!surface.IsGIApplied() && GetCamera().texture_rtdiffuse_index >= 0)
 	{
-		lighting.indirect.diffuse = (half3)bindless_textures[GetCamera().texture_rtdiffuse_index][surface.pixel].rgb;
+		lighting.indirect.diffuse = bindless_textures_half4[GetCamera().texture_rtdiffuse_index][surface.pixel].rgb;
 		surface.SetGIApplied(true);
 	}
 
 	[branch]
 	if (!surface.IsGIApplied() && GetFrame().options & OPTION_BIT_SURFELGI_ENABLED && GetCamera().texture_surfelgi_index >= 0 && surfel_cellvalid(surfel_cell(surface.P)))
 	{
-		lighting.indirect.diffuse = (half3)bindless_textures[GetCamera().texture_surfelgi_index][surface.pixel].rgb;
+		lighting.indirect.diffuse = bindless_textures_half4[GetCamera().texture_surfelgi_index][surface.pixel].rgb;
 		surface.SetGIApplied(true);
 	}
 
 	[branch]
 	if (!surface.IsGIApplied() && GetCamera().texture_vxgi_diffuse_index >= 0)
 	{
-		lighting.indirect.diffuse = (half3)bindless_textures[GetCamera().texture_vxgi_diffuse_index][surface.pixel].rgb;
+		lighting.indirect.diffuse = bindless_textures_half4[GetCamera().texture_vxgi_diffuse_index][surface.pixel].rgb;
 		surface.SetGIApplied(true);
 	}
 	[branch]
 	if (GetCamera().texture_vxgi_specular_index >= 0)
 	{
-		half4 vxgi_specular = (half4)bindless_textures[GetCamera().texture_vxgi_specular_index][surface.pixel];
+		half4 vxgi_specular = bindless_textures_half4[GetCamera().texture_vxgi_specular_index][surface.pixel];
 		lighting.indirect.specular = vxgi_specular.rgb * surface.F + lighting.indirect.specular * (1 - vxgi_specular.a);
 	}
 #endif // TRANSPARENT
@@ -380,19 +381,21 @@ inline void TiledLighting(inout Surface surface, inout Lighting lighting, uint f
 	{
 		// Directional lights are not culled, so simply iterate through each one:
 		ShaderEntityIterator iterator = directional_lights();
-		for(uint entity_index = iterator.first_item(); entity_index <= iterator.last_item(); ++entity_index)
+		for(uint entity_index = iterator.first_item(); entity_index < iterator.end_item(); ++entity_index)
 		{
 			ShaderEntity light = load_entity(entity_index);
+			if (light.GetFlags() & ENTITY_FLAG_LIGHT_STATIC)
+				break; // static lights will be skipped here (they are used at lightmap baking)
 
 			half shadow_mask = 1;
 #if defined(SHADOW_MASK_ENABLED) && !defined(TRANSPARENT)
 			[branch]
-			if (light.IsCastingShadow() && (GetFrame().options & OPTION_BIT_SHADOW_MASK) && (GetCamera().options & SHADERCAMERA_OPTION_USE_SHADOW_MASK) && GetCamera().texture_rtshadow_index >= 0)
+			if (surface.IsReceiveShadow() && light.IsCastingShadow() && (GetFrame().options & OPTION_BIT_SHADOW_MASK) && (GetCamera().options & SHADERCAMERA_OPTION_USE_SHADOW_MASK) && GetCamera().texture_rtshadow_index >= 0)
 			{
 				uint shadow_index = entity_index - lights().first_item();
 				if (shadow_index < 16)
 				{
-					shadow_mask = (half)bindless_textures2DArray[GetCamera().texture_rtshadow_index][uint3(surface.pixel, shadow_index)].r;
+					shadow_mask = bindless_textures2DArray_half4[GetCamera().texture_rtshadow_index][uint3(surface.pixel, shadow_index)].r;
 				}
 			}
 #endif // SHADOW_MASK_ENABLED && !TRANSPARENT
@@ -409,13 +412,12 @@ inline void TiledLighting(inout Surface surface, inout Lighting lighting, uint f
 		for(uint bucket = iterator.first_bucket(); bucket <= iterator.last_bucket(); ++bucket)
 		{
 			uint bucket_bits = load_entitytile(flatTileIndex + bucket);
+			bucket_bits = iterator.mask_entity(bucket, bucket_bits);
 
 #ifndef ENTITY_TILE_UNIFORM
 			// Bucket scalarizer - Siggraph 2017 - Improved Culling [Michal Drobot]:
 			bucket_bits = WaveReadLaneFirst(WaveActiveBitOr(bucket_bits));
 #endif // ENTITY_TILE_UNIFORM
-
-			bucket_bits = iterator.mask_entity(bucket, bucket_bits);
 
 			[loop]
 			while (bucket_bits != 0)
@@ -435,7 +437,7 @@ inline void TiledLighting(inout Surface surface, inout Lighting lighting, uint f
 					uint shadow_index = entity_index - lights().first_item();
 					if (shadow_index < 16)
 					{
-						shadow_mask = (half)bindless_textures2DArray[GetCamera().texture_rtshadow_index][uint3(surface.pixel, shadow_index)].r;
+						shadow_mask = bindless_textures2DArray_half4[GetCamera().texture_rtshadow_index][uint3(surface.pixel, shadow_index)].r;
 					}
 				}
 #endif // SHADOW_MASK_ENABLED && !TRANSPARENT
@@ -454,13 +456,12 @@ inline void TiledLighting(inout Surface surface, inout Lighting lighting, uint f
 		for(uint bucket = iterator.first_bucket(); bucket <= iterator.last_bucket(); ++bucket)
 		{
 			uint bucket_bits = load_entitytile(flatTileIndex + bucket);
+			bucket_bits = iterator.mask_entity(bucket, bucket_bits);
 
 #ifndef ENTITY_TILE_UNIFORM
 			// Bucket scalarizer - Siggraph 2017 - Improved Culling [Michal Drobot]:
 			bucket_bits = WaveReadLaneFirst(WaveActiveBitOr(bucket_bits));
 #endif // ENTITY_TILE_UNIFORM
-
-			bucket_bits = iterator.mask_entity(bucket, bucket_bits);
 
 			[loop]
 			while (bucket_bits != 0)
@@ -480,7 +481,7 @@ inline void TiledLighting(inout Surface surface, inout Lighting lighting, uint f
 					uint shadow_index = entity_index - lights().first_item();
 					if (shadow_index < 16)
 					{
-						shadow_mask = (half)bindless_textures2DArray[GetCamera().texture_rtshadow_index][uint3(surface.pixel, shadow_index)].r;
+						shadow_mask = bindless_textures2DArray_half4[GetCamera().texture_rtshadow_index][uint3(surface.pixel, shadow_index)].r;
 					}
 				}
 #endif // SHADOW_MASK_ENABLED && !TRANSPARENT
@@ -519,13 +520,12 @@ inline void TiledDecals(inout Surface surface, uint flatTileIndex, inout half4 s
 	for(uint bucket = iterator.first_bucket(); bucket <= iterator.last_bucket(); ++bucket)
 	{
 		uint bucket_bits = load_entitytile(flatTileIndex + bucket);
+		bucket_bits = iterator.mask_entity(bucket, bucket_bits);
 
 #ifndef ENTITY_TILE_UNIFORM
 		// This is the wave scalarizer from Improved Culling - Siggraph 2017 [Drobot]:
 		bucket_bits = WaveReadLaneFirst(WaveActiveBitOr(bucket_bits));
 #endif // ENTITY_TILE_UNIFORM
-
-		bucket_bits = iterator.mask_entity(bucket, bucket_bits);
 
 		[loop]
 		while (WaveActiveAnyTrue(bucket_bits != 0 && decalAccumulation.a < 1 && decalBumpAccumulation.a < 1 && decalSurfaceAccumulationAlpha < 1))
@@ -558,8 +558,8 @@ inline void TiledDecals(inout Surface surface, uint flatTileIndex, inout half4 s
 				const float2 decalDY = mul(P_dy, (float3x3)decalProjection).xy;
 				half4 decalColor = decal.GetColor();
 				// blend out if close to cube Z:
-				const half edgeBlend = 1 - pow(saturate(abs(clipSpacePos.z)), 8);
-				const half slopeBlend = decal.GetConeAngleCos() > 0 ? pow(saturate(dot(surface.N, decal.GetDirection())), decal.GetConeAngleCos()) : 1;
+				const half edgeBlend = 1 - pow8(saturate(abs((half)clipSpacePos.z)));
+				const half slopeBlend = decal.GetConeAngleCos() > 0 ? pow(saturate(dot((half3)surface.N, decal.GetDirection())), decal.GetConeAngleCos()) : 1;
 				decalColor.a *= edgeBlend * slopeBlend;
 				[branch]
 				if (decalDisplacementmap >= 0)
@@ -574,7 +574,7 @@ inline void TiledDecals(inout Surface surface, uint flatTileIndex, inout half4 s
 						surface.V,
 						tbn,
 						decal.GetLength(),
-						bindless_textures[decalDisplacementmap],
+						bindless_textures_half4[decalDisplacementmap],
 						uvw.xy,
 						decalDX,
 						decalDY,
@@ -585,7 +585,7 @@ inline void TiledDecals(inout Surface surface, uint flatTileIndex, inout half4 s
 				[branch]
 				if (decalTexture >= 0)
 				{
-					decalColor *= (half4)bindless_textures[decalTexture].SampleGrad(sam, uvw.xy, decalDX, decalDY);
+					decalColor *= bindless_textures_half4[decalTexture].SampleGrad(sam, uvw.xy, decalDX, decalDY);
 					if ((decal.GetFlags() & ENTITY_FLAG_DECAL_BASECOLOR_ONLY_ALPHA) == 0)
 					{
 						// perform manual blending of decals:
@@ -597,7 +597,7 @@ inline void TiledDecals(inout Surface surface, uint flatTileIndex, inout half4 s
 				[branch]
 				if (decalNormal >= 0)
 				{
-					half3 decalBumpColor = half3(bindless_textures[decalNormal].SampleGrad(sam, uvw.xy, decalDX, decalDY).rg, 1);
+					half3 decalBumpColor = half3(bindless_textures_half4[decalNormal].SampleGrad(sam, uvw.xy, decalDX, decalDY).rg, 1);
 					decalBumpColor = decalBumpColor * 2 - 1;
 					decalBumpColor.rg *= decal.GetAngleScale();
 					decalBumpAccumulation.rgb = mad(1 - decalBumpAccumulation.a, decalColor.a * decalBumpColor.rgb, decalBumpAccumulation.rgb);
@@ -606,7 +606,7 @@ inline void TiledDecals(inout Surface surface, uint flatTileIndex, inout half4 s
 				[branch]
 				if (decalSurfacemap >= 0)
 				{
-					half4 decalSurfaceColor = (half4)bindless_textures[decalSurfacemap].SampleGrad(sam, uvw.xy, decalDX, decalDY);
+					half4 decalSurfaceColor = (half4)bindless_textures_half4[decalSurfacemap].SampleGrad(sam, uvw.xy, decalDX, decalDY);
 					decalSurfaceAccumulation = mad(1 - decalSurfaceAccumulationAlpha, decalColor.a * decalSurfaceColor, decalSurfaceAccumulation);
 					decalSurfaceAccumulationAlpha = mad(1 - decalColor.a, decalSurfaceAccumulationAlpha, decalColor.a);
 				}
@@ -621,23 +621,23 @@ inline void TiledDecals(inout Surface surface, uint flatTileIndex, inout half4 s
 #endif // DISABLE_DECALS
 }
 
-inline void ApplyFog(in float distance, float3 V, inout float4 color)
+inline void ApplyFog(in float distance, float3 V, inout half4 color)
 {
-	const float4 fog = GetFog(distance, GetCamera().position, -V);
+	const half4 fog = GetFog(distance, GetCamera().position, -V);
 	//color.rgb = (1.0 - fog.a) * color.rgb + fog.rgb; // premultiplied fog
 	color.rgb = lerp(color.rgb, fog.rgb, fog.a); // non-premultiplied fog
 }
 
-inline void ApplyAerialPerspective(float2 uv, float3 P, inout float4 color)
+inline void ApplyAerialPerspective(float2 uv, float3 P, inout half4 color)
 {
 	if (GetFrame().options & OPTION_BIT_REALISTIC_SKY_AERIAL_PERSPECTIVE)
 	{
-		const float4 AP = GetAerialPerspectiveTransmittance(uv, P, GetCamera().position, texture_cameravolumelut);
+		const half4 AP = GetAerialPerspectiveTransmittance(uv, P, GetCamera().position, texture_cameravolumelut);
 		color.rgb = color.rgb * (1.0 - AP.a) + AP.rgb;
 	}
 }
 
-inline uint AlphaToCoverage(float alpha, float alphaTest, float4 svposition)
+inline uint AlphaToCoverage(half alpha, half alphaTest, float4 svposition)
 {
 	if (alphaTest == 0)
 	{

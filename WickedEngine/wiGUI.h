@@ -637,6 +637,7 @@ namespace wi::gui
 	protected:
 		wi::vector<Widget*> widgets;
 		bool minimized = false;
+		bool has_titlebar = false;
 		Widget scrollable_area;
 		float control_size = 20;
 		std::function<void(EventArgs args)> onClose;
@@ -676,6 +677,8 @@ namespace wi::gui
 			MOVE = 1 << 8,
 			CLOSE = 1 << 9,
 			COLLAPSE = 1 << 10,
+			DISABLE_TITLE_BAR = 1 << 11,
+			FIT_ALL_WIDGETS_VERTICAL = 1 << 12, // auto resize window vertically to fit all widgets that are in it
 
 			RESIZE = RESIZE_LEFT | RESIZE_TOP | RESIZE_RIGHT | RESIZE_BOTTOM | RESIZE_TOPLEFT | RESIZE_TOPRIGHT | RESIZE_BOTTOMLEFT | RESIZE_BOTTOMRIGHT,
 			CLOSE_AND_COLLAPSE = CLOSE | COLLAPSE,
@@ -815,7 +818,7 @@ namespace wi::gui
 		bool HasScrollbar() const;
 
 		void ClearSelection();
-		void Select(int index);
+		void Select(int index, bool allow_deselect = true);
 		void FocusOnItem(int index);
 		void FocusOnItemByUserdata(uint64_t userdata);
 

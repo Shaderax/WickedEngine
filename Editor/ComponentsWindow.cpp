@@ -9,7 +9,7 @@ void ComponentsWindow::Create(EditorComponent* _editor)
 {
 	editor = _editor;
 
-	wi::gui::Window::Create("Components ", wi::gui::Window::WindowControls::RESIZE_LEFT);
+	wi::gui::Window::Create("Components ", wi::gui::Window::WindowControls::RESIZE_LEFT | wi::gui::Window::WindowControls::DISABLE_TITLE_BAR);
 	SetText("Entity - Component System");
 	font.params.h_align = wi::font::WIFALIGN_RIGHT;
 	SetShadowRadius(2);
@@ -1285,7 +1285,7 @@ void ComponentsWindow::RefreshEntityTree()
 	for (auto& x : entitytree_temp_items)
 	{
 		const HierarchyComponent* hier = scene.hierarchy.GetComponent(x);
-		if (hier == nullptr || hier->parentID == INVALID_ENTITY)
+		if (hier == nullptr || hier->parentID == INVALID_ENTITY || entitytree_temp_items.count(hier->parentID) == 0)
 		{
 			PushToEntityTree(x, 0);
 		}

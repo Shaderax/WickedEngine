@@ -8,7 +8,7 @@ using namespace wi::scene;
 
 ModifierWindow::ModifierWindow(const std::string& name)
 {
-	wi::gui::Window::Create(name, wi::gui::Window::WindowControls::CLOSE_AND_COLLAPSE);
+	wi::gui::Window::Create(name, wi::gui::Window::WindowControls::CLOSE_AND_COLLAPSE | wi::gui::Window::WindowControls::FIT_ALL_WIDGETS_VERTICAL);
 	SetSize(XMFLOAT2(200, 100));
 
 	blendCombo.Create("Blend: ");
@@ -214,24 +214,39 @@ HeightmapModifierWindow::HeightmapModifierWindow() : ModifierWindow("Heightmap")
 				heightmap_modifier->width = 0;
 				heightmap_modifier->height = 0;
 				int bpp = 0;
-				if (stbi_is_16_bit(fileName.c_str()))
+				wi::vector<uint8_t> filedata;
+				if (!wi::helper::FileRead(fileName, filedata))
 				{
-					stbi_us* rgba = stbi_load_16(fileName.c_str(), &heightmap_modifier->width, &heightmap_modifier->height, &bpp, 1); if (rgba != nullptr)
+					wi::backlog::post("Heightmap loading failed, file couldn't be found: " + fileName, wi::backlog::LogLevel::Error);
+				}
+
+				if (stbi_is_16_bit_from_memory((const stbi_uc*)filedata.data(), (int)filedata.size()))
+				{
+					stbi_us* rgba = stbi_load_16_from_memory((const stbi_uc*)filedata.data(), (int)filedata.size(), &heightmap_modifier->width, &heightmap_modifier->height, &bpp, 1);
+					if (rgba != nullptr)
 					{
 						heightmap_modifier->data.resize(heightmap_modifier->width * heightmap_modifier->height * sizeof(uint16_t));
 						std::memcpy(heightmap_modifier->data.data(), rgba, heightmap_modifier->data.size());
 						stbi_image_free(rgba);
 						generation_callback(); // callback after heightmap load confirmation
 					}
+					else
+					{
+						wi::backlog::post("Heightmap loading unknown failure for 16-bit image: " + fileName, wi::backlog::LogLevel::Error);
+					}
 				}
 				else
 				{
-					stbi_uc* rgba = stbi_load(fileName.c_str(), &heightmap_modifier->width, &heightmap_modifier->height, &bpp, 1);
+					stbi_uc* rgba = stbi_load_from_memory((const stbi_uc*)filedata.data(), (int)filedata.size(), &heightmap_modifier->width, &heightmap_modifier->height, &bpp, 1);
 					if (rgba != nullptr)
 					{
 						heightmap_modifier->data.resize(heightmap_modifier->width * heightmap_modifier->height * sizeof(uint8_t));
 						std::memcpy(heightmap_modifier->data.data(), rgba, heightmap_modifier->data.size());
 						generation_callback(); // callback after heightmap load confirmation
+					}
+					else
+					{
+						wi::backlog::post("Heightmap loading failure for 8-bit image: " + fileName, wi::backlog::LogLevel::Error);
 					}
 				}
 			});
@@ -306,7 +321,7 @@ PropWindow::PropWindow(wi::terrain::Prop* prop, wi::scene::Scene* scene)
 		scene->Entity_Remove(entity);
 	}
 
-	wi::gui::Window::Create(windowName, wi::gui::Window::WindowControls::CLOSE_AND_COLLAPSE);
+	wi::gui::Window::Create(windowName, wi::gui::Window::WindowControls::CLOSE_AND_COLLAPSE | wi::gui::Window::WindowControls::FIT_ALL_WIDGETS_VERTICAL);
 
 	constexpr auto elementSize = XMFLOAT2(100, 20);
 
@@ -646,7 +661,7 @@ void TerrainWindow::Create(EditorComponent* _editor)
 	RemoveWidgets();
 	ClearTransform();
 
-	wi::gui::Window::Create(ICON_TERRAIN " Terrain", wi::gui::Window::WindowControls::COLLAPSE | wi::gui::Window::WindowControls::CLOSE);
+	wi::gui::Window::Create(ICON_TERRAIN " Terrain", wi::gui::Window::WindowControls::COLLAPSE | wi::gui::Window::WindowControls::CLOSE | wi::gui::Window::WindowControls::FIT_ALL_WIDGETS_VERTICAL);
 	SetSize(XMFLOAT2(420, 1000));
 
 	closeButton.SetTooltip("Delete Terrain.");
@@ -1732,42 +1747,64 @@ void TerrainWindow::SetupAssets()
 	}
 
 	// Grass config:
-	terrain_preset.grassEntity = CreateEntity();
-	currentScene.Component_Attach(terrain_preset.grassEntity, entity);
-	currentScene.materials.Create(terrain_preset.grassEntity);
-	currentScene.hairs.Create(terrain_preset.grassEntity) = terrain_preset.grass_properties;
-	MaterialComponent* material_Grass = currentScene.materials.GetComponent(terrain_preset.grassEntity);
-	wi::HairParticleSystem* grass = currentScene.hairs.GetComponent(terrain_preset.grassEntity);
-	wi::config::File grass_config;
-	grass_config.Open(std::string(asset_path + "grass.ini").c_str());
-	if (grass_config.Has("texture"))
+	std::string grassWiscenePath = asset_path + "grass.wiscene";
+	if (wi::helper::FileExists(grassWiscenePath))
 	{
-		material_Grass->textures[MaterialComponent::BASECOLORMAP].name = asset_path + grass_config.GetText("texture");
-		material_Grass->CreateRenderData();
+		// New method: grass from wiscene file
+		Scene grassScene;
+		LoadModel(grassScene, grassWiscenePath);
+		if (grassScene.hairs.GetCount() > 0)
+		{
+			terrain_preset.grassEntity = grassScene.hairs.GetEntity(0);
+			currentScene.Merge(grassScene);
+		}
 	}
-	if (grass_config.Has("alphaRef"))
+	else
 	{
-		material_Grass->alphaRef = grass_config.GetFloat("alphaRef");
-	}
-	if (grass_config.Has("length"))
-	{
-		grass->length = grass_config.GetFloat("length");
-	}
-	if (grass_config.Has("frameCount"))
-	{
-		grass->frameCount = grass_config.GetInt("frameCount");
-	}
-	if (grass_config.Has("framesX"))
-	{
-		grass->framesX = grass_config.GetInt("framesX");
-	}
-	if (grass_config.Has("framesY"))
-	{
-		grass->framesY = grass_config.GetInt("framesY");
-	}
-	if (grass_config.Has("frameCount"))
-	{
-		grass->frameStart = grass_config.GetInt("frameStart");
+		// Old method: from grass.ini, doesn't support some spritesheet features...
+		terrain_preset.grassEntity = CreateEntity();
+		currentScene.Component_Attach(terrain_preset.grassEntity, entity);
+		currentScene.materials.Create(terrain_preset.grassEntity);
+		currentScene.hairs.Create(terrain_preset.grassEntity) = terrain_preset.grass_properties;
+		MaterialComponent* material_Grass = currentScene.materials.GetComponent(terrain_preset.grassEntity);
+		wi::HairParticleSystem* grass = currentScene.hairs.GetComponent(terrain_preset.grassEntity);
+		wi::config::File grass_config;
+		grass_config.Open(std::string(asset_path + "grass.ini").c_str());
+		if (grass_config.Has("texture"))
+		{
+			material_Grass->textures[MaterialComponent::BASECOLORMAP].name = asset_path + grass_config.GetText("texture");
+			material_Grass->CreateRenderData();
+		}
+		if (grass_config.Has("alphaRef"))
+		{
+			material_Grass->alphaRef = grass_config.GetFloat("alphaRef");
+		}
+		if (grass_config.Has("length"))
+		{
+			grass->length = grass_config.GetFloat("length");
+		}
+
+		uint32_t framesX = 1;
+		uint32_t framesY = 1;
+		uint32_t frameCount = 1;
+		uint32_t frameStart = 0;
+		if (grass_config.Has("frameCount"))
+		{
+			frameCount = grass_config.GetInt("frameCount");
+		}
+		if (grass_config.Has("framesX"))
+		{
+			framesX = grass_config.GetInt("framesX");
+		}
+		if (grass_config.Has("framesY"))
+		{
+			framesY = grass_config.GetInt("framesY");
+		}
+		if (grass_config.Has("frameCount"))
+		{
+			frameStart = grass_config.GetInt("frameStart");
+		}
+		grass->ConvertFromOLDSpriteSheet(framesX, framesY, frameCount, frameStart);
 	}
 
 	{

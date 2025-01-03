@@ -11,7 +11,7 @@
 //	distance	: sample to point distance
 //	O			: sample position
 //	V			: sample to point vector
-inline float GetFogAmount(float distance, float3 O, float3 V)
+inline half GetFogAmount(float distance, float3 O, float3 V)
 {
 	ShaderFog fog = GetWeather().fog;
 	
@@ -19,7 +19,7 @@ inline float GetFogAmount(float distance, float3 O, float3 V)
 	
 	if (GetFrame().options & OPTION_BIT_HEIGHT_FOG)
 	{
-		float fogFalloffScale = 1.0 / max(0.01, fog.height_end - fog.height_start);
+		float fogFalloffScale = rcp(max(0.01, fog.height_end - fog.height_start));
 
 		// solve for x, e^(-h * x) = 0.001
 		// x = 6.907755 * h^-1
@@ -55,9 +55,9 @@ inline float GetFogAmount(float distance, float3 O, float3 V)
 	}
 }
 
-inline float4 GetFog(float distance, float3 O, float3 V)
+inline half4 GetFog(float distance, float3 O, float3 V)
 {
-	float3 fogColor = 0;
+	half3 fogColor = 0;
 	
 	if ((GetFrame().options & OPTION_BIT_REALISTIC_SKY) && (GetFrame().options & OPTION_BIT_OVERRIDE_FOG_COLOR) == 0)
 	{
@@ -71,19 +71,19 @@ inline float4 GetFog(float distance, float3 O, float3 V)
 
 	// Sample inscattering color:
 	{
-		const float3 L = GetSunDirection();
+		const half3 L = GetSunDirection();
 		
-		float3 inscatteringColor = GetSunColor();
+		half3 inscatteringColor = GetSunColor();
 
 		// Apply atmosphere transmittance:
 		if (GetFrame().options & OPTION_BIT_REALISTIC_SKY)
 		{
 			// 0 for position since fog is centered around world center
-			inscatteringColor *= GetAtmosphericLightTransmittance(GetWeather().atmosphere, float3(0.0, 0.0, 0.0), L, texture_transmittancelut);
+			inscatteringColor *= GetAtmosphericLightTransmittance(GetWeather().atmosphere, 0, L, texture_transmittancelut);
 		}
 		
 		// Apply phase function solely for directionality:
-		const float cosTheta = dot(-V, L);
+		const half cosTheta = dot(-V, L);
 		inscatteringColor *= HgPhase(FOG_INSCATTERING_PHASE_G, cosTheta);
 
 		// Apply uniform phase since this medium is constant:
@@ -92,7 +92,7 @@ inline float4 GetFog(float distance, float3 O, float3 V)
 		fogColor += inscatteringColor;
 	}
 	
-	return float4(fogColor, GetFogAmount(distance, O, V));
+	return half4(fogColor, GetFogAmount(distance, O, V));
 }
 
 

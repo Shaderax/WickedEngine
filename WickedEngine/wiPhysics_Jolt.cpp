@@ -413,9 +413,7 @@ namespace wi::physics
 
 			if (!shape_result.IsValid())
 			{
-				char text[1024] = {};
-				snprintf(text, arraysize(text), "AddRigidBody failed, shape_result: %s", shape_result.GetError().c_str());
-				wi::backlog::post(text, wi::backlog::LogLevel::Error);
+				wilog_error("AddRigidBody failed, shape_result: %s", shape_result.GetError().c_str());
 				return;
 			}
 			else
@@ -625,7 +623,7 @@ namespace wi::physics
 #endif
 
 				// Detect which way humanoid is facing in rest pose:
-				const float facing = scene.GetHumanoidDefaultFacing(humanoid, humanoidEntity);
+				const float facing = humanoid.default_facing;
 
 				// Whole ragdoll will take a uniform scaling:
 				const XMMATRIX scaleMatrix = XMMatrixScaling(scale, scale, scale);
@@ -768,6 +766,9 @@ namespace wi::physics
 							break;
 						}
 					}
+
+					capsule_radius = std::abs(capsule_radius);
+					capsule_height = std::abs(capsule_height);
 
 					ShapeSettings::ShapeResult shape_result;
 					CapsuleShapeSettings shape_settings(capsule_height * 0.5f, capsule_radius);
@@ -1144,9 +1145,7 @@ namespace wi::physics
 
 		RegisterTypes();
 
-		char text[256] = {};
-		snprintf(text, arraysize(text), "wi::physics Initialized [Jolt Physics %d.%d.%d] (%d ms)", JPH_VERSION_MAJOR, JPH_VERSION_MINOR, JPH_VERSION_PATCH, (int)std::round(timer.elapsed()));
-		wi::backlog::post(text);
+		wilog("wi::physics Initialized [Jolt Physics %d.%d.%d] (%d ms)", JPH_VERSION_MAJOR, JPH_VERSION_MINOR, JPH_VERSION_PATCH, (int)std::round(timer.elapsed()));
 	}
 
 	bool IsEnabled() { return ENABLED; }
@@ -1405,12 +1404,15 @@ namespace wi::physics
 			}
 			Ragdoll& ragdoll = *(Ragdoll*)humanoid.ragdoll.get();
 
+			if (humanoid.IsRagdollPhysicsEnabled())
+			{
+				ragdoll.Activate(scene, humanoidEntity);
+			}
+
 			if (IsSimulationEnabled())
 			{
 				if (humanoid.IsRagdollPhysicsEnabled())
 				{
-					ragdoll.Activate(scene, humanoidEntity);
-
 					// Apply effects on dynamics if needed:
 					if (scene.weather.IsOceanEnabled())
 					{
@@ -1485,19 +1487,17 @@ namespace wi::physics
 
 					const Vec3 position = cast(transform->GetPosition());
 					const Quat rotation = cast(transform->GetRotation());
-
 					Mat44 m = Mat44::sTranslation(position) * Mat44::sRotation(rotation);
-					m = m * rb.restBasisInverse;
 					m = m * rb.additionalTransform;
 
-					rb.prev_position = m.GetTranslation();
-					rb.prev_rotation = m.GetQuaternion().Normalized();
-
+					// Simulation is disabled, update physics state immediately:
+					rb.prev_position = position;
+					rb.prev_rotation = rotation;
 					body_interface.SetPositionAndRotation(
 						rb.bodyID,
-						rb.prev_position,
-						rb.prev_rotation,
-						EActivation::DontActivate
+						m.GetTranslation(),
+						m.GetQuaternion().Normalized(),
+						EActivation::Activate
 					);
 				}
 			}
@@ -2109,7 +2109,7 @@ namespace wi::physics
 		inray.mDirection = inray.mDirection * range;
 
 		RayCastSettings settings;
-		settings.mBackFaceMode = EBackFaceMode::IgnoreBackFaces;
+		settings.mBackFaceModeTriangles = EBackFaceMode::IgnoreBackFaces;
 		settings.mTreatConvexAsSolid = false;
 
 		WickedClosestHitCollector<CastRayCollector> collector;

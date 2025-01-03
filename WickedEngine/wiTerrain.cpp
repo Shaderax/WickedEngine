@@ -421,6 +421,7 @@ namespace wi::terrain
 	Terrain::~Terrain()
 	{
 		Generation_Cancel();
+		wi::jobsystem::Wait(virtual_texture_ctx);
 	}
 
 	void Terrain::Generation_Restart()
@@ -527,7 +528,6 @@ namespace wi::terrain
 			{
 				grassEntity = CreateEntity();
 			}
-			scene->Component_Attach(grassEntity, terrainEntity);
 			if (!scene->hairs.Contains(grassEntity))
 			{
 				scene->hairs.Create(grassEntity);
@@ -592,25 +592,6 @@ namespace wi::terrain
 			{
 				restart_generation = true;
 				break;
-			}
-		}
-		if (grassEntity != INVALID_ENTITY)
-		{
-			MaterialComponent* material_grassparticle_in_scene = scene->materials.GetComponent(grassEntity);
-			if (material_grassparticle_in_scene != nullptr)
-			{
-				if (material_grassparticle_in_scene->IsDirty())
-				{
-					restart_generation = true;
-				}
-			}
-			wi::HairParticleSystem* hair = scene->hairs.GetComponent(grassEntity);
-			if (hair != nullptr)
-			{
-				if (hair->IsDirty())
-				{
-					restart_generation = true;
-				}
 			}
 		}
 
@@ -706,6 +687,9 @@ namespace wi::terrain
 			}
 		}
 
+		// Ensure that enough grass chunks are generated so that grass view distance will not cause popping:
+		grass_chunk_dist = int(grass_properties.viewDistance / chunk_width + 0.5f);
+
 		for (auto it = chunks.begin(); it != chunks.end();)
 		{
 			const Chunk& chunk = it->first;
@@ -771,7 +755,7 @@ namespace wi::terrain
 				else
 				{
 					// Grass patch removal:
-					if (chunk_data.grass_entity != INVALID_ENTITY && (dist > 1 || !IsGrassEnabled()))
+					if (chunk_data.grass_entity != INVALID_ENTITY && (dist > grass_chunk_dist || !IsGrassEnabled()))
 					{
 						scene->Entity_Remove(chunk_data.grass_entity);
 						chunk_data.grass_entity = INVALID_ENTITY; // grass can be generated here by generation thread...
@@ -795,7 +779,19 @@ namespace wi::terrain
 					chunk_data.grass_density_current = grass_density;
 					grass->strandCount = uint32_t(chunk_data.grass.strandCount * chunk_data.grass_density_current);
 					grass->length = grass_properties.length;
+					grass->randomness = grass_properties.randomness;
+					grass->randomSeed = grass_properties.randomSeed;
+					grass->stiffness = grass_properties.stiffness;
 					grass->viewDistance = grass_properties.viewDistance;
+					grass->width = grass_properties.width;
+					grass->uniformity = grass_properties.uniformity;
+					grass->atlas_rects = grass_properties.atlas_rects;
+				}
+
+				MaterialComponent* chunkGrassMaterial = scene->materials.GetComponent(chunk_data.grass_entity);
+				if (chunkGrassMaterial != nullptr)
+				{
+					*chunkGrassMaterial = grass_material;
 				}
 			}
 
@@ -1041,7 +1037,7 @@ namespace wi::terrain
 				const int dist = std::max(std::abs(center_chunk.x - chunk.x), std::abs(center_chunk.z - chunk.z));
 
 				// Grass patch placement:
-				if (dist <= 1 && IsGrassEnabled())
+				if (dist <= grass_chunk_dist && IsGrassEnabled())
 				{
 					it = chunks.find(chunk);
 					if (it != chunks.end() && it->second.entity != INVALID_ENTITY)
@@ -1278,7 +1274,7 @@ namespace wi::terrain
 		{
 			SamplerDesc samplerDesc;
 			samplerDesc.filter = Filter::ANISOTROPIC;
-			samplerDesc.max_anisotropy = 8; // The atlas tile border can take up to 8x anisotropic
+			samplerDesc.max_anisotropy = 4;
 			samplerDesc.address_u = TextureAddressMode::CLAMP;
 			samplerDesc.address_v = TextureAddressMode::CLAMP;
 			samplerDesc.address_w = TextureAddressMode::CLAMP;
@@ -1304,7 +1300,7 @@ namespace wi::terrain
 			if (!atlas.IsValid())
 			{
 				const uint32_t physical_width = 16384u;
-				const uint32_t physical_height = 8192u;
+				const uint32_t physical_height = 16384u;
 				GPUBufferDesc tile_pool_desc;
 
 				for (uint32_t map_type = 0; map_type < arraysize(atlas.maps); ++map_type)
@@ -1437,6 +1433,7 @@ namespace wi::terrain
 					if (vt.residency != nullptr)
 					{
 						material->texMulAdd = XMFLOAT4(1, 1, 0, 0);
+						material->textures[map_type].virtual_anisotropy = sampler.desc.max_anisotropy;
 						material->textures[map_type].sparse_residencymap_descriptor = device->GetDescriptorIndex(&vt.residency->residencyMap, SubresourceType::SRV);
 						if (map_type == 0)
 						{
@@ -1447,6 +1444,7 @@ namespace wi::terrain
 						{
 							material->textures[map_type].sparse_feedbackmap_descriptor = -1;
 						}
+						material->textures[map_type].resource.SetTextureVirtual(atlas.tile_pool, vt.residency->residencyMap, vt.residency->feedbackMap);
 					}
 					else
 					{
@@ -1465,6 +1463,7 @@ namespace wi::terrain
 						}
 						material->textures[map_type].sparse_residencymap_descriptor = -1;
 						material->textures[map_type].sparse_feedbackmap_descriptor = -1;
+						material->textures[map_type].resource.SetTextureVirtual(atlas.tile_pool, Texture(), Texture());
 					}
 					material->textures[map_type].lod_clamp = (float)vt.lod_count - 2;
 				}

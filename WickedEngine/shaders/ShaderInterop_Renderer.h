@@ -24,11 +24,11 @@ struct alignas(16) ShaderScene
 	int BVH_primitives;
 
 	float3 aabb_min;
-	float padding3;
+	uint instanceCount;
 	float3 aabb_max;
-	float padding4;
+	uint geometryCount;
 	float3 aabb_extents;		// enclosing AABB abs(max - min)
-	float padding5;
+	uint materialCount;
 	float3 aabb_extents_rcp;	// enclosing AABB 1.0f / abs(max - min)
 	float padding6;
 
@@ -105,6 +105,7 @@ enum TEXTURESLOT
 	TEXTURESLOT_COUNT
 };
 
+static const float SVT_MIP_BIAS = 0.5;
 static const uint SVT_TILE_SIZE = 256u;
 static const uint SVT_TILE_BORDER = 4u;
 static const uint SVT_TILE_SIZE_PADDED = SVT_TILE_SIZE + SVT_TILE_BORDER * 2;
@@ -126,23 +127,51 @@ static const uint2 SVT_PACKED_MIP_OFFSETS[SVT_PACKED_MIP_COUNT] = {
 #define UniformTextureSlot(x) (x)
 #endif // TEXTURE_SLOT_NONUNIFORM
 
-inline float get_lod(in uint2 dim, in float2 uv_dx, in float2 uv_dy)
+inline float get_lod(in uint2 dim, in float2 uv_dx, in float2 uv_dy, uint anisotropy = 0)
 {
-	// https://microsoft.github.io/DirectX-Specs/d3d/archive/D3D11_3_FunctionalSpec.htm#7.18.11%20LOD%20Calculations
-	return log2(max(length(uv_dx * dim), length(uv_dy * dim)));
+	// LOD calculations DirectX specs: https://microsoft.github.io/DirectX-Specs/d3d/archive/D3D11_3_FunctionalSpec.htm#7.18.11%20LOD%20Calculations
+
+	// Isotropic:
+	if (anisotropy == 0)
+		return log2(max(length(uv_dx * dim), length(uv_dy * dim)));
+
+	// Anisotropic:
+	uv_dx *= dim;
+	uv_dy *= dim;
+	float squaredLengthX = dot(uv_dx, uv_dx);
+	float squaredLengthY = dot(uv_dy, uv_dy);
+	float determinant = abs(uv_dx.x * uv_dy.y - uv_dx.y * uv_dy.x);
+	bool isMajorX = squaredLengthX > squaredLengthY;
+	float squaredLengthMajor = isMajorX ? squaredLengthX : squaredLengthY;
+	float lengthMajor = sqrt(squaredLengthMajor);
+	float ratioOfAnisotropy = squaredLengthMajor / determinant;
+
+	float lengthMinor = 0;
+	if (ratioOfAnisotropy > anisotropy)
+	{
+		// ratio is clamped - LOD is based on ratio (preserves area)
+		lengthMinor = lengthMajor / anisotropy;
+	}
+	else
+	{
+		// ratio not clamped - LOD is based on area
+		lengthMinor = determinant / lengthMajor;
+	}
+
+	return log2(lengthMinor);
 }
 #endif // __cplusplus
 
 struct alignas(16) ShaderTextureSlot
 {
-	uint uvset_lodclamp;
+	uint uvset_aniso_lodclamp;
 	int texture_descriptor;
 	int sparse_residencymap_descriptor;
 	int sparse_feedbackmap_descriptor;
 
 	inline void init()
 	{
-		uvset_lodclamp = 0;
+		uvset_aniso_lodclamp = 0;
 		texture_descriptor = -1;
 		sparse_residencymap_descriptor = -1;
 		sparse_feedbackmap_descriptor = -1;
@@ -154,20 +183,24 @@ struct alignas(16) ShaderTextureSlot
 	}
 	inline uint GetUVSet()
 	{
-		return uvset_lodclamp & 1u;
+		return uvset_aniso_lodclamp & 1u;
+	}
+	inline uint GetAnisotropy()
+	{
+		return (uvset_aniso_lodclamp >> 1u) & 0x7F;
 	}
 
 #ifndef __cplusplus
 	inline float GetLodClamp()
 	{
-		return f16tof32((uvset_lodclamp >> 1u) & 0xFFFF);
+		return f16tof32((uvset_aniso_lodclamp >> 16u) & 0xFFFF);
 	}
-	Texture2D GetTexture()
+	Texture2D<half4> GetTexture()
 	{
-		return bindless_textures[UniformTextureSlot(texture_descriptor)];
+		return bindless_textures_half4[UniformTextureSlot(texture_descriptor)];
 	}
-	float4 SampleVirtual(
-		in Texture2D tex,
+	half4 SampleVirtual(
+		in Texture2D<half4> tex,
 		in SamplerState sam,
 		in float2 uv,
 		in Texture2D<uint4> residency_map,
@@ -202,7 +235,7 @@ struct alignas(16) ShaderTextureSlot
 		const float clamped_lod = virtual_lod < max_nonpacked_lod ? max(virtual_lod, residency.z) : virtual_lod;
 
 		// Mip - more detailed:
-		float4 value0;
+		half4 value0;
 		{
 			uint lod0 = uint(clamped_lod);
 			const uint packed_mip_idx = packed_mips ? uint(virtual_lod - max_nonpacked_lod - 1) : 0;
@@ -216,7 +249,7 @@ struct alignas(16) ShaderTextureSlot
 		}
 
 		// Mip - less detailed:
-		float4 value1;
+		half4 value1;
 		{
 			uint lod1 = uint(clamped_lod + 1);
 			packed_mips = uint(lod1) > max_nonpacked_lod;
@@ -232,11 +265,11 @@ struct alignas(16) ShaderTextureSlot
 			value1 = tex.SampleLevel(sam, atlas_uv, 0);
 		}
 
-		return lerp(value0, value1, frac(clamped_lod)); // custom trilinear filtering
+		return lerp(value0, value1, (half)frac(clamped_lod)); // custom trilinear filtering
 	}
-	float4 Sample(in SamplerState sam, in float4 uvsets)
+	half4 Sample(in SamplerState sam, in float4 uvsets)
 	{
-		Texture2D tex = GetTexture();
+		Texture2D<half4> tex = GetTexture();
 		float2 uv = GetUVSet() == 0 ? uvsets.xy : uvsets.zw;
 
 #ifndef DISABLE_SVT
@@ -247,7 +280,7 @@ struct alignas(16) ShaderTextureSlot
 			float2 virtual_tile_count;
 			residency_map.GetDimensions(virtual_tile_count.x, virtual_tile_count.y);
 			float2 virtual_image_dim = virtual_tile_count * SVT_TILE_SIZE;
-			float virtual_lod = get_lod(virtual_image_dim, ddx_coarse(uv), ddy_coarse(uv));
+			float virtual_lod = get_lod(virtual_image_dim, ddx_coarse(uv), ddy_coarse(uv), GetAnisotropy()) + SVT_MIP_BIAS;
 			return SampleVirtual(tex, sam, uv, residency_map, virtual_tile_count, virtual_image_dim, virtual_lod);
 		}
 #endif // DISABLE_SVT
@@ -255,9 +288,9 @@ struct alignas(16) ShaderTextureSlot
 		return tex.Sample(sam, uv);
 	}
 
-	float4 SampleLevel(in SamplerState sam, in float4 uvsets, in float lod)
+	half4 SampleLevel(in SamplerState sam, in float4 uvsets, in float lod)
 	{
-		Texture2D tex = GetTexture();
+		Texture2D<half4> tex = GetTexture();
 		float2 uv = GetUVSet() == 0 ? uvsets.xy : uvsets.zw;
 
 #ifndef DISABLE_SVT
@@ -275,9 +308,9 @@ struct alignas(16) ShaderTextureSlot
 		return tex.SampleLevel(sam, uv, lod);
 	}
 
-	float4 SampleBias(in SamplerState sam, in float4 uvsets, in float bias)
+	half4 SampleBias(in SamplerState sam, in float4 uvsets, in float bias)
 	{
-		Texture2D tex = GetTexture();
+		Texture2D<half4> tex = GetTexture();
 		float2 uv = GetUVSet() == 0 ? uvsets.xy : uvsets.zw;
 
 #ifndef DISABLE_SVT
@@ -288,7 +321,7 @@ struct alignas(16) ShaderTextureSlot
 			float2 virtual_tile_count;
 			residency_map.GetDimensions(virtual_tile_count.x, virtual_tile_count.y);
 			float2 virtual_image_dim = virtual_tile_count * SVT_TILE_SIZE;
-			float virtual_lod = get_lod(virtual_image_dim, ddx_coarse(uv), ddy_coarse(uv));
+			float virtual_lod = get_lod(virtual_image_dim, ddx_coarse(uv), ddy_coarse(uv), GetAnisotropy()) + SVT_MIP_BIAS;
 			virtual_lod += bias;
 			return SampleVirtual(tex, sam, uv, residency_map, virtual_tile_count, virtual_image_dim, virtual_lod + bias);
 		}
@@ -297,9 +330,9 @@ struct alignas(16) ShaderTextureSlot
 		return tex.SampleBias(sam, uv, bias);
 	}
 
-	float4 SampleGrad(in SamplerState sam, in float4 uvsets, in float4 uvsets_dx, in float4 uvsets_dy)
+	half4 SampleGrad(in SamplerState sam, in float4 uvsets, in float4 uvsets_dx, in float4 uvsets_dy)
 	{
-		Texture2D tex = GetTexture();
+		Texture2D<half4> tex = GetTexture();
 		float2 uv = GetUVSet() == 0 ? uvsets.xy : uvsets.zw;
 		float2 uv_dx = GetUVSet() == 0 ? uvsets_dx.xy : uvsets_dx.zw;
 		float2 uv_dy = GetUVSet() == 0 ? uvsets_dy.xy : uvsets_dy.zw;
@@ -312,7 +345,7 @@ struct alignas(16) ShaderTextureSlot
 			float2 virtual_tile_count;
 			residency_map.GetDimensions(virtual_tile_count.x, virtual_tile_count.y);
 			float2 virtual_image_dim = virtual_tile_count * SVT_TILE_SIZE;
-			float virtual_lod = get_lod(virtual_image_dim, uv_dx, uv_dy);
+			float virtual_lod = get_lod(virtual_image_dim, uv_dx, uv_dy, GetAnisotropy()) + SVT_MIP_BIAS;
 			return SampleVirtual(tex, sam, uv, residency_map, virtual_tile_count, virtual_image_dim, virtual_lod);
 		}
 #endif // DISABLE_SVT
@@ -607,6 +640,12 @@ struct alignas(16) ShaderTransform
 			0, 0, 0, 1
 		);
 	}
+#ifndef __cplusplus
+	float3x3 GetMatrixAdjoint()
+	{
+		return adjoint(GetMatrix());
+	}
+#endif // __cplusplus
 };
 
 struct alignas(16) ShaderMeshInstance
@@ -614,39 +653,41 @@ struct alignas(16) ShaderMeshInstance
 	uint uid;
 	uint flags;	// high 8 bits: user stencilRef
 	uint layerMask;
-	uint geometryOffset;	// offset of all geometries for currently active LOD
-
-	uint2 emissive;
-	uint color;
-	uint geometryCount;		// number of all geometries in currently active LOD
-
 	uint meshletOffset; // offset in the global meshlet buffer for first subset (for LOD0)
-	float fadeDistance;
+
+	uint geometryOffset;	// offset of all geometries for currently active LOD
+	uint geometryCount;		// number of all geometries in currently active LOD
 	uint baseGeometryOffset;	// offset of all geometries of the instance (if no LODs, then it is equal to geometryOffset)
 	uint baseGeometryCount;		// number of all geometries of the instance (if no LODs, then it is equal to geometryCount)
 
-	float3 center;
-	float radius;
+	uint2 color; // packed half4
+	uint2 emissive; // packed half4
 
 	int vb_ao;
 	int vb_wetmap;
 	int lightmap;
-	uint alphaTest_size;
+	uint alphaTest_size; // packed half2
 
-	uint2 rimHighlight;
-	uint2 padding;
+	uint2 rimHighlight; // packed half4
+	float fadeDistance;
+	float padding;
 
-	float4 quaternion;
-	ShaderTransform transform;
-	ShaderTransform transformPrev;
-	ShaderTransform transformRaw; // without quantization remapping applied
+	float3 center;
+	float radius;
+
+	ShaderTransform transform; // Note: this could contain quantization remapping from UNORM -> FLOAT depending on vertex position format
+	ShaderTransform transformPrev; // Note: this could contain quantization remapping from UNORM -> FLOAT depending on vertex position format
+	ShaderTransform transformRaw; // Note: this is the world matrix without any quantization remapping
 
 	void init()
 	{
+#ifdef __cplusplus
+		using namespace wi::math;
+#endif // __cplusplus
 		uid = 0;
 		flags = 0;
 		layerMask = 0;
-		color = ~0u;
+		color = pack_half4(1, 1, 1, 1);
 		emissive = uint2(0, 0);
 		lightmap = -1;
 		geometryOffset = 0;
@@ -660,7 +701,6 @@ struct alignas(16) ShaderMeshInstance
 		vb_ao = -1;
 		vb_wetmap = -1;
 		alphaTest_size = 0;
-		quaternion = float4(0, 0, 0, 1);
 		rimHighlight = uint2(0, 0);
 		transform.init();
 		transformPrev.init();
@@ -677,7 +717,7 @@ struct alignas(16) ShaderMeshInstance
 	}
 
 #ifndef __cplusplus
-	inline half4 GetColor() { return (half4)unpack_rgba(color); }
+	inline half4 GetColor() { return unpack_half4(color); }
 	inline half3 GetEmissive() { return unpack_half3(emissive); }
 	inline half GetAlphaTest() { return unpack_half2(alphaTest_size).x; }
 	inline half GetSize() { return unpack_half2(alphaTest_size).y; }
@@ -699,6 +739,8 @@ struct ShaderMeshInstancePointer
 		data |= (camera_index & 0xF) << 24u;
 		data |= (uint(dither * 15.0f) & 0xF) << 28u;
 	}
+
+#ifndef __cplusplus
 	uint GetInstanceIndex()
 	{
 		return data & 0xFFFFFF;
@@ -707,10 +749,11 @@ struct ShaderMeshInstancePointer
 	{
 		return (data >> 24u) & 0xF;
 	}
-	float GetDither()
+	half GetDither()
 	{
-		return float((data >> 28u) & 0xF) / 15.0f;
+		return half((data >> 28u) & 0xF) / 15.0;
 	}
+#endif // __cplusplus
 };
 
 struct ObjectPushConstants
@@ -742,11 +785,11 @@ struct alignas(16) ShaderEntity
 
 #ifndef __cplusplus
 	// Shader-side:
-	inline uint GetType()
+	inline min16uint GetType()
 	{
 		return type8_flags8_range16 & 0xFF;
 	}
-	inline uint GetFlags()
+	inline min16uint GetFlags()
 	{
 		return (type8_flags8_range16 >> 8u) & 0xFF;
 	}
@@ -774,7 +817,7 @@ struct alignas(16) ShaderEntity
 	{
 		return (half)f16tof32(direction16_coneAngleCos16.y >> 16u);
 	}
-	inline uint GetShadowCascadeCount()
+	inline min16uint GetShadowCascadeCount()
 	{
 		return direction16_coneAngleCos16.y >> 16u;
 	}
@@ -803,11 +846,11 @@ struct alignas(16) ShaderEntity
 		retVal.w = (half)f16tof32(color.y >> 16u);
 		return retVal;
 	}
-	inline uint GetMatrixIndex()
+	inline min16uint GetMatrixIndex()
 	{
 		return indices & 0xFFFF;
 	}
-	inline uint GetTextureIndex()
+	inline min16uint GetTextureIndex()
 	{
 		return indices >> 16u;
 	}
@@ -926,6 +969,32 @@ struct alignas(16) ShaderFrustum
 #endif // __cplusplus
 };
 
+struct alignas(16) ShaderFrustumCorners
+{
+	// topleft, topright, bottomleft, bottomright
+	float4 cornersNEAR[4];
+	float4 cornersFAR[4];
+
+#ifndef __cplusplus
+	inline float3 screen_to_nearplane(float2 uv)
+	{
+		float3 posTOP = lerp(cornersNEAR[0], cornersNEAR[1], uv.x);
+		float3 posBOTTOM = lerp(cornersNEAR[2], cornersNEAR[3], uv.x);
+		return lerp(posTOP, posBOTTOM, uv.y);
+	}
+	inline float3 screen_to_farplane(float2 uv)
+	{
+		float3 posTOP = lerp(cornersFAR[0], cornersFAR[1], uv.x);
+		float3 posBOTTOM = lerp(cornersFAR[2], cornersFAR[3], uv.x);
+		return lerp(posTOP, posBOTTOM, uv.y);
+	}
+	inline float3 screen_to_world(float2 uv, float lineardepthNormalized)
+	{
+		return lerp(screen_to_nearplane(uv), screen_to_farplane(uv), lineardepthNormalized);
+	}
+#endif // __cplusplus
+};
+
 enum SHADER_ENTITY_TYPE
 {
 	ENTITY_TYPE_DIRECTIONALLIGHT,
@@ -964,10 +1033,6 @@ struct ShaderEntityIterator
 	constexpr operator uint() const { return value; }
 #endif // __cplusplus
 
-	inline bool empty()
-	{
-		return value == 0;
-	}
 	inline uint item_offset()
 	{
 		return value & 0xFFFF;
@@ -976,13 +1041,21 @@ struct ShaderEntityIterator
 	{
 		return value >> 16u;
 	}
+	inline bool empty()
+	{
+		return item_count() == 0;
+	}
 	inline uint first_item()
 	{
 		return item_offset();
 	}
-	inline uint last_item()
+	inline uint last_item() // includes last valid item
 	{
 		return empty() ? 0 : (item_offset() + item_count() - 1);
+	}
+	inline uint end_item() // excludes last valid item
+	{
+		return empty() ? 0 : (item_offset() + item_count());
 	}
 	inline uint first_bucket()
 	{
@@ -1080,7 +1153,7 @@ struct alignas(16) FrameCB
 
 	float		cloudShadowFarPlaneKm;
 	int			texture_volumetricclouds_shadow_index;
-	float		gi_boost;
+	uint		giboost_packed; // force fp16 load
 	uint		entity_culling_count;
 
 	float		blue_noise_phase;
@@ -1159,6 +1232,7 @@ struct alignas(16) ShaderCamera
 	float4x4	inverse_view_projection;
 
 	ShaderFrustum frustum;
+	ShaderFrustumCorners frustum_corners;
 
 	float2		temporalaa_jitter;
 	float2		temporalaa_jitter_prev;
@@ -1313,6 +1387,29 @@ struct alignas(16) ShaderCamera
 	inline bool is_pixel_inside_scissor(uint2 pixel)
 	{
 		return pixel.x >= scissor.x && pixel.x <= scissor.z && pixel.y >= scissor.y && pixel.y <= scissor.w;
+	}
+
+	inline bool IsOrtho() { return options & SHADERCAMERA_OPTION_ORTHO; }
+
+	inline float3 screen_to_nearplane(float4 svposition)
+	{
+		const float2 ScreenCoord = svposition.xy * internal_resolution_rcp;
+		return frustum_corners.screen_to_nearplane(ScreenCoord);
+	}
+	inline float3 screen_to_farplane(float4 svposition)
+	{
+		const float2 ScreenCoord = svposition.xy * internal_resolution_rcp;
+		return frustum_corners.screen_to_farplane(ScreenCoord);
+	}
+
+	// Convert raw screen coordinate from rasterizer to world position
+	//	Note: svposition is the SV_Position system value, the .w component can be different in different compilers
+	//	You need to ensure that the .w component is used for linear depth (Vulkan: -fvk-use-dx-position-w, Xbox: in case VRS, there is complication with this, read documentation)
+	inline float3 screen_to_world(float4 svposition)
+	{
+		const float2 ScreenCoord = svposition.xy * internal_resolution_rcp;
+		const float z = IsOrtho() ? (1 - svposition.z) : ((svposition.w - z_near) * z_range_rcp);
+		return frustum_corners.screen_to_world(ScreenCoord, z);
 	}
 #endif // __cplusplus
 };
@@ -1586,6 +1683,16 @@ CBUFFER(TrailRendererCB, CBSLOT_TRAILRENDERER)
 	float		g_xTrailDepthSoften;
 	float3		g_xTrailPadding;
 	float		g_xTrailCameraFar;
+};
+
+CBUFFER(PaintDecalCB, CBSLOT_RENDERER_MISC)
+{
+	float4x4 g_xPaintDecalMatrix;
+
+	int g_xPaintDecalTexture;
+	int g_xPaintDecalInstanceID;
+	float g_xPaintDecalSlopeBlendPower;
+	int g_xPaintDecalpadding;
 };
 
 

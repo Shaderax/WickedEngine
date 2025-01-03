@@ -15,6 +15,7 @@
 #include "wiFont.h"
 #include "wiImage.h"
 #include "wiEventHandler.h"
+#include "wiPlatform.h"
 
 #ifdef PLATFORM_PS5
 #include "wiGraphicsDevice_PS5.h"
@@ -96,8 +97,7 @@ namespace wi
 		wi::font::UpdateAtlas(canvas.GetDPIScaling());
 
 		ColorSpace colorspace = graphicsDevice->GetSwapChainColorSpace(&swapChain);
-		bool colorspace_conversion_required = colorspace == ColorSpace::HDR10_ST2084;
-		if (colorspace_conversion_required)
+		if (colorspace == ColorSpace::HDR10_ST2084)
 		{
 			// In HDR10, we perform the compositing in a custom linear color space render target
 			if (!rendertarget.IsValid())
@@ -124,7 +124,7 @@ namespace wi
 		{
 			// Until engine is not loaded, present initialization screen...
 			CommandList cmd = graphicsDevice->BeginCommandList();
-			if (colorspace_conversion_required)
+			if (rendertarget.IsValid())
 			{
 				RenderPassImage rp[] = {
 					RenderPassImage::RenderTarget(&rendertarget, RenderPassImage::LoadOp::CLEAR),
@@ -145,7 +145,7 @@ namespace wi
 			}
 			graphicsDevice->RenderPassEnd(cmd);
 
-			if (colorspace_conversion_required)
+			if (rendertarget.IsValid())
 			{
 				// In HDR10, we perform a final mapping from linear to HDR10, into the swapchain
 				graphicsDevice->RenderPassBegin(&swapChain, cmd);
@@ -259,7 +259,7 @@ namespace wi
 		viewport.height = (float)swapChain.desc.height;
 		graphicsDevice->BindViewports(1, &viewport, cmd);
 
-		if (colorspace_conversion_required)
+		if (rendertarget.IsValid())
 		{
 			RenderPassImage rp[] = {
 				RenderPassImage::RenderTarget(&rendertarget, RenderPassImage::LoadOp::CLEAR),
@@ -273,7 +273,7 @@ namespace wi
 		Compose(cmd);
 		graphicsDevice->RenderPassEnd(cmd);
 
-		if (colorspace_conversion_required)
+		if (rendertarget.IsValid())
 		{
 			// In HDR10, we perform a final mapping from linear to HDR10, into the swapchain
 			graphicsDevice->RenderPassBegin(&swapChain, cmd);
@@ -709,6 +709,42 @@ namespace wi
 			assert(success);
 			});
 
+	}
+
+	void Application::SetFullScreen(bool fullscreen)
+	{
+#if defined(PLATFORM_WINDOWS_DESKTOP)
+
+		// Based on: https://devblogs.microsoft.com/oldnewthing/20100412-00/?p=14353
+		static WINDOWPLACEMENT wp = {};
+		DWORD dwStyle = GetWindowLong(window, GWL_STYLE);
+		bool currently_windowed = dwStyle & WS_OVERLAPPEDWINDOW;
+		if (currently_windowed && fullscreen) {
+			MONITORINFO mi = { sizeof(mi) };
+			if (GetWindowPlacement(window, &wp) &&
+				GetMonitorInfo(MonitorFromWindow(window,
+					MONITOR_DEFAULTTOPRIMARY), &mi)) {
+				SetWindowLong(window, GWL_STYLE,
+					dwStyle & ~WS_OVERLAPPEDWINDOW);
+				SetWindowPos(window, HWND_TOP,
+					mi.rcMonitor.left, mi.rcMonitor.top,
+					mi.rcMonitor.right - mi.rcMonitor.left,
+					mi.rcMonitor.bottom - mi.rcMonitor.top,
+					SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+			}
+		}
+		else if (!currently_windowed && !fullscreen) {
+			SetWindowLong(window, GWL_STYLE,
+				dwStyle | WS_OVERLAPPEDWINDOW);
+			SetWindowPlacement(window, &wp);
+			SetWindowPos(window, NULL, 0, 0, 0, 0,
+				SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER |
+				SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+		}
+
+#elif defined(PLATFORM_LINUX)
+		SDL_SetWindowFullscreen(window, fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
+#endif // PLATFORM_WINDOWS_DESKTOP
 	}
 
 }

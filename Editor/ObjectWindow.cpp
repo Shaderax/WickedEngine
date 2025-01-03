@@ -61,8 +61,11 @@ struct Atlas_Dim
 	uint32_t width = 0;
 	uint32_t height = 0;
 };
-static Atlas_Dim GenerateMeshAtlas(MeshComponent& meshcomponent, uint32_t resolution)
+static Atlas_Dim GenerateMeshAtlas(Scene& scene, Entity entity, uint32_t resolution)
 {
+	MeshComponent& meshcomponent = *scene.meshes.GetComponent(entity);
+	SoftBodyPhysicsComponent* softbody = scene.softbodies.GetComponent(entity);
+
 	Atlas_Dim dim;
 
 	xatlas::Atlas* atlas = xatlas::Create();
@@ -84,7 +87,7 @@ static Atlas_Dim GenerateMeshAtlas(MeshComponent& meshcomponent, uint32_t resolu
 		mesh.indexCount = (int)meshcomponent.indices.size();
 		mesh.indexData = meshcomponent.indices.data();
 		mesh.indexFormat = xatlas::IndexFormat::UInt32;
-		xatlas::AddMeshError::Enum error = xatlas::AddMesh(atlas, mesh);
+		xatlas::AddMeshError error = xatlas::AddMesh(atlas, mesh);
 		if (error != xatlas::AddMeshError::Success) {
 			wi::helper::messageBox(xatlas::StringForEnum(error), "Adding mesh to xatlas failed!");
 			return dim;
@@ -94,13 +97,17 @@ static Atlas_Dim GenerateMeshAtlas(MeshComponent& meshcomponent, uint32_t resolu
 	// Generate atlas:
 	{
 		xatlas::ChartOptions chartoptions;
-		xatlas::ParameterizeOptions parametrizeoptions;
-		xatlas::PackOptions packoptions;
+		chartoptions.useInputMeshUvs = true;
+		chartoptions.fixWinding = true;
+		//chartoptions.normalDeviationWeight = 0.1f;
+		//chartoptions.normalSeamWeight = 0.1f;
 
+		xatlas::PackOptions packoptions;
 		packoptions.resolution = resolution;
 		packoptions.blockAlign = true;
+		packoptions.padding = 2;
 
-		xatlas::Generate(atlas, chartoptions, parametrizeoptions, packoptions);
+		xatlas::Generate(atlas, chartoptions, packoptions);
 		dim.width = atlas->width;
 		dim.height = atlas->height;
 
@@ -112,15 +119,23 @@ static Atlas_Dim GenerateMeshAtlas(MeshComponent& meshcomponent, uint32_t resolu
 		wi::vector<XMFLOAT3> positions(mesh.vertexCount);
 		wi::vector<XMFLOAT2> atlas(mesh.vertexCount);
 		wi::vector<XMFLOAT3> normals;
+		wi::vector<uint8_t> winds;
 		wi::vector<XMFLOAT4> tangents;
 		wi::vector<XMFLOAT2> uvset_0;
 		wi::vector<XMFLOAT2> uvset_1;
 		wi::vector<uint32_t> colors;
 		wi::vector<XMUINT4> boneindices;
 		wi::vector<XMFLOAT4> boneweights;
+		wi::vector<XMUINT4> boneindices2;
+		wi::vector<XMFLOAT4> boneweights2;
+		wi::vector<float> softbodyweights;
 		if (!meshcomponent.vertex_normals.empty())
 		{
 			normals.resize(mesh.vertexCount);
+		}
+		if (!meshcomponent.vertex_windweights.empty())
+		{
+			winds.resize(mesh.vertexCount);
 		}
 		if (!meshcomponent.vertex_tangents.empty())
 		{
@@ -146,6 +161,18 @@ static Atlas_Dim GenerateMeshAtlas(MeshComponent& meshcomponent, uint32_t resolu
 		{
 			boneweights.resize(mesh.vertexCount);
 		}
+		if (!meshcomponent.vertex_boneindices2.empty())
+		{
+			boneindices2.resize(mesh.vertexCount);
+		}
+		if (!meshcomponent.vertex_boneweights2.empty())
+		{
+			boneweights2.resize(mesh.vertexCount);
+		}
+		if (softbody != nullptr && !softbody->weights.empty())
+		{
+			softbodyweights.resize(mesh.vertexCount);
+		}
 
 		for (uint32_t j = 0; j < mesh.indexCount; ++j)
 		{
@@ -158,6 +185,10 @@ static Atlas_Dim GenerateMeshAtlas(MeshComponent& meshcomponent, uint32_t resolu
 			if (!normals.empty())
 			{
 				normals[ind] = meshcomponent.vertex_normals[v.xref];
+			}
+			if (!winds.empty())
+			{
+				winds[ind] = meshcomponent.vertex_windweights[v.xref];
 			}
 			if (!tangents.empty())
 			{
@@ -183,6 +214,18 @@ static Atlas_Dim GenerateMeshAtlas(MeshComponent& meshcomponent, uint32_t resolu
 			{
 				boneweights[ind] = meshcomponent.vertex_boneweights[v.xref];
 			}
+			if (!boneindices2.empty())
+			{
+				boneindices2[ind] = meshcomponent.vertex_boneindices2[v.xref];
+			}
+			if (!boneweights2.empty())
+			{
+				boneweights2[ind] = meshcomponent.vertex_boneweights2[v.xref];
+			}
+			if (softbody != nullptr && !softbodyweights.empty())
+			{
+				softbodyweights[ind] = softbody->weights[v.xref];
+			}
 		}
 
 		meshcomponent.vertex_positions = positions;
@@ -190,6 +233,10 @@ static Atlas_Dim GenerateMeshAtlas(MeshComponent& meshcomponent, uint32_t resolu
 		if (!normals.empty())
 		{
 			meshcomponent.vertex_normals = normals;
+		}
+		if (!winds.empty())
+		{
+			meshcomponent.vertex_windweights = winds;
 		}
 		if (!tangents.empty())
 		{
@@ -215,7 +262,28 @@ static Atlas_Dim GenerateMeshAtlas(MeshComponent& meshcomponent, uint32_t resolu
 		{
 			meshcomponent.vertex_boneweights = boneweights;
 		}
+		if (!boneindices2.empty())
+		{
+			meshcomponent.vertex_boneindices2 = boneindices2;
+		}
+		if (!boneweights2.empty())
+		{
+			meshcomponent.vertex_boneweights2 = boneweights2;
+		}
+		if (softbody != nullptr && !softbodyweights.empty())
+		{
+			softbody->weights = softbodyweights;
+		}
 		meshcomponent.CreateRenderData();
+
+		if (softbody != nullptr)
+		{
+			// Recreate softbody
+			softbody->physicsobject = {};
+			softbody->physicsIndices.clear();
+			softbody->physicsToGraphicsVertexMapping.clear();
+			softbody->CreateFromMesh(meshcomponent);
+		}
 
 	}
 
@@ -256,8 +324,8 @@ void ObjectWindow::Create(EditorComponent* _editor)
 {
 	editor = _editor;
 
-	wi::gui::Window::Create(ICON_OBJECT " Object", wi::gui::Window::WindowControls::COLLAPSE | wi::gui::Window::WindowControls::CLOSE);
-	SetSize(XMFLOAT2(670, 940));
+	wi::gui::Window::Create(ICON_OBJECT " Object", wi::gui::Window::WindowControls::COLLAPSE | wi::gui::Window::WindowControls::CLOSE | wi::gui::Window::WindowControls::FIT_ALL_WIDGETS_VERTICAL);
+	SetSize(XMFLOAT2(670, 980));
 
 	closeButton.SetTooltip("Delete ObjectComponent");
 	OnClose([=](wi::gui::EventArgs args) {
@@ -542,14 +610,19 @@ void ObjectWindow::Create(EditorComponent* _editor)
 
 	y += step;
 
+	lightmapPreviewButton.Create("");
+	lightmapPreviewButton.SetVisible(false);
+	for (auto& x : lightmapPreviewButton.sprites)
+	{
+		x.params.blendFlag = wi::enums::BLENDMODE_OPAQUE;
+	}
+	AddWidget(&lightmapPreviewButton);
 
-	lightmapResolutionSlider.Create(32, 1024, 128, 1024 - 32, "Lightmap resolution: ");
+	lightmapResolutionSlider.Create(32, 8192, 512, 8192 - 32, "Lightmap resolution: ");
 	lightmapResolutionSlider.SetTooltip("Set the approximate resolution for this object's lightmap. This will be packed into the larger global lightmap later.");
 	lightmapResolutionSlider.SetSize(XMFLOAT2(wid, hei));
 	lightmapResolutionSlider.SetPos(XMFLOAT2(x, y += step));
 	lightmapResolutionSlider.OnSlide([&](wi::gui::EventArgs args) {
-		// unfortunately, we must be pow2 with full float lightmap format, otherwise it could be unlimited (but accumulation blending would suffer then)
-		//	or at least for me, downloading the lightmap was glitching out when non-pow 2 and RGBA32_FLOAT format
 		lightmapResolutionSlider.SetValue(float(wi::math::GetNextPowerOfTwo(uint32_t(args.fValue)))); 
 	});
 	AddWidget(&lightmapResolutionSlider);
@@ -601,7 +674,7 @@ void ObjectWindow::Create(EditorComponent* _editor)
 		UV_GEN_TYPE gen_type = (UV_GEN_TYPE)lightmapSourceUVSetComboBox.GetSelected();
 
 		wi::unordered_set<ObjectComponent*> gen_objects;
-		wi::unordered_map<MeshComponent*, Atlas_Dim> gen_meshes;
+		wi::unordered_map<Entity, Atlas_Dim> gen_meshes;
 
 		for (auto& x : this->editor->translator.selected)
 		{
@@ -613,7 +686,7 @@ void ObjectWindow::Create(EditorComponent* _editor)
 				if (meshcomponent != nullptr)
 				{
 					gen_objects.insert(objectcomponent);
-					gen_meshes[meshcomponent] = Atlas_Dim();
+					gen_meshes[objectcomponent->meshID] = Atlas_Dim();
 				}
 			}
 
@@ -623,7 +696,7 @@ void ObjectWindow::Create(EditorComponent* _editor)
 
 		for (auto& it : gen_meshes)
 		{
-			MeshComponent& mesh = *it.first;
+			MeshComponent& mesh = *scene.meshes.GetComponent(it.first);
 			if (gen_type == UV_GEN_COPY_UVSET_0)
 			{
 				mesh.vertex_atlas = mesh.vertex_uvset_0;
@@ -637,7 +710,7 @@ void ObjectWindow::Create(EditorComponent* _editor)
 			else if (gen_type == UV_GEN_GENERATE_ATLAS)
 			{
 				wi::jobsystem::Execute(ctx, [&](wi::jobsystem::JobArgs args) {
-					it.second = GenerateMeshAtlas(mesh, (uint32_t)lightmapResolutionSlider.GetValue());
+					it.second = GenerateMeshAtlas(scene, it.first, (uint32_t)lightmapResolutionSlider.GetValue());
 				});
 			}
 		}
@@ -646,11 +719,10 @@ void ObjectWindow::Create(EditorComponent* _editor)
 		for (auto& x : gen_objects)
 		{
 			x->ClearLightmap();
-			MeshComponent* meshcomponent = scene.meshes.GetComponent(x->meshID);
 			if (gen_type == UV_GEN_GENERATE_ATLAS)
 			{
-				x->lightmapWidth = gen_meshes.at(meshcomponent).width;
-				x->lightmapHeight = gen_meshes.at(meshcomponent).height;
+				x->lightmapWidth = gen_meshes.at(x->meshID).width;
+				x->lightmapHeight = gen_meshes.at(x->meshID).height;
 			}
 			else
 			{
@@ -1090,6 +1162,16 @@ void ObjectWindow::ResizeLayout()
 		y += widget.GetSize().y;
 		y += padding;
 	};
+	auto add_fullwidth_aspect = [&](wi::gui::Widget& widget) {
+		if (!widget.IsVisible())
+			return;
+		const float margin_left = padding;
+		const float margin_right = padding;
+		widget.SetPos(XMFLOAT2(margin_left, y));
+		widget.SetSize(XMFLOAT2(width - margin_left - margin_right, width - margin_left - margin_right));
+		y += widget.GetSize().y;
+		y += padding;
+	};
 
 	margin_left = 80;
 
@@ -1126,9 +1208,27 @@ void ObjectWindow::ResizeLayout()
 	add(stopLightmapGenButton);
 	add(clearLightmapButton);
 
+
+	Scene& scene = editor->GetCurrentScene();
+	const ObjectComponent* object = scene.objects.GetComponent(entity);
+	if (object != nullptr)
+	{
+		if (object->lightmap.IsValid())
+		{
+			wi::Resource res;
+			res.SetTexture(object->lightmap);
+			lightmapPreviewButton.SetImage(res);
+			lightmapPreviewButton.SetVisible(true);
+			add_fullwidth_aspect(lightmapPreviewButton);
+		}
+		else
+		{
+			lightmapPreviewButton.SetVisible(false);
+		}
+	}
+
 	y += jump;
 	add_fullwidth(vertexAOButton);
 	add(vertexAORayCountSlider);
 	add(vertexAORayLengthSlider);
-
 }

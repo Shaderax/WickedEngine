@@ -25,7 +25,7 @@ MeshComponent* get_mesh(Scene& scene, PickResult x)
 void MeshWindow::Create(EditorComponent* _editor)
 {
 	editor = _editor;
-	wi::gui::Window::Create(ICON_MESH " Mesh", wi::gui::Window::WindowControls::COLLAPSE | wi::gui::Window::WindowControls::CLOSE);
+	wi::gui::Window::Create(ICON_MESH " Mesh", wi::gui::Window::WindowControls::COLLAPSE | wi::gui::Window::WindowControls::CLOSE | wi::gui::Window::WindowControls::FIT_ALL_WIDGETS_VERTICAL);
 	SetSize(XMFLOAT2(580, 880));
 
 	closeButton.SetTooltip("Delete MeshComponent");
@@ -249,12 +249,14 @@ void MeshWindow::Create(EditorComponent* _editor)
 	flipCullingButton.SetPos(XMFLOAT2(mod_x, y += step));
 	flipCullingButton.OnClick([&](wi::gui::EventArgs args) {
 		wi::scene::Scene& scene = editor->GetCurrentScene();
+		wi::unordered_set<MeshComponent*> visited_meshes; // fix double visit (straight mesh + object->mesh)
 		for (auto& x : editor->translator.selected)
 		{
 			MeshComponent* mesh = get_mesh(scene, x);
-			if (mesh == nullptr)
+			if (mesh == nullptr || visited_meshes.count(mesh) > 0)
 				continue;
 			mesh->FlipCulling();
+			visited_meshes.insert(mesh);
 		}
 		SetEntity(entity, subset);
 	});
@@ -266,12 +268,14 @@ void MeshWindow::Create(EditorComponent* _editor)
 	flipNormalsButton.SetPos(XMFLOAT2(mod_x, y += step));
 	flipNormalsButton.OnClick([&](wi::gui::EventArgs args) {
 		wi::scene::Scene& scene = editor->GetCurrentScene();
+		wi::unordered_set<MeshComponent*> visited_meshes; // fix double visit (straight mesh + object->mesh)
 		for (auto& x : editor->translator.selected)
 		{
 			MeshComponent* mesh = get_mesh(scene, x);
-			if (mesh == nullptr)
+			if (mesh == nullptr || visited_meshes.count(mesh) > 0)
 				continue;
 			mesh->FlipNormals();
+			visited_meshes.insert(mesh);
 		}
 		SetEntity(entity, subset);
 	});
@@ -283,12 +287,14 @@ void MeshWindow::Create(EditorComponent* _editor)
 	computeNormalsSmoothButton.SetPos(XMFLOAT2(mod_x, y += step));
 	computeNormalsSmoothButton.OnClick([&](wi::gui::EventArgs args) {
 		wi::scene::Scene& scene = editor->GetCurrentScene();
+		wi::unordered_set<MeshComponent*> visited_meshes; // fix double visit (straight mesh + object->mesh)
 		for (auto& x : editor->translator.selected)
 		{
 			MeshComponent* mesh = get_mesh(scene, x);
-			if (mesh == nullptr)
+			if (mesh == nullptr || visited_meshes.count(mesh) > 0)
 				continue;
 			mesh->ComputeNormals(MeshComponent::COMPUTE_NORMALS_SMOOTH);
+			visited_meshes.insert(mesh);
 		}
 		SetEntity(entity, subset);
 	});
@@ -300,12 +306,14 @@ void MeshWindow::Create(EditorComponent* _editor)
 	computeNormalsHardButton.SetPos(XMFLOAT2(mod_x, y += step));
 	computeNormalsHardButton.OnClick([&](wi::gui::EventArgs args) {
 		wi::scene::Scene& scene = editor->GetCurrentScene();
+		wi::unordered_set<MeshComponent*> visited_meshes; // fix double visit (straight mesh + object->mesh)
 		for (auto& x : editor->translator.selected)
 		{
 			MeshComponent* mesh = get_mesh(scene, x);
-			if (mesh == nullptr)
+			if (mesh == nullptr || visited_meshes.count(mesh) > 0)
 				continue;
 			mesh->ComputeNormals(MeshComponent::COMPUTE_NORMALS_HARD);
+			visited_meshes.insert(mesh);
 		}
 		SetEntity(entity, subset);
 	});
@@ -317,12 +325,14 @@ void MeshWindow::Create(EditorComponent* _editor)
 	recenterButton.SetPos(XMFLOAT2(mod_x, y += step));
 	recenterButton.OnClick([&](wi::gui::EventArgs args) {
 		wi::scene::Scene& scene = editor->GetCurrentScene();
+		wi::unordered_set<MeshComponent*> visited_meshes; // fix double visit (straight mesh + object->mesh)
 		for (auto& x : editor->translator.selected)
 		{
 			MeshComponent* mesh = get_mesh(scene, x);
-			if (mesh == nullptr)
+			if (mesh == nullptr || visited_meshes.count(mesh) > 0)
 				continue;
 			mesh->Recenter();
+			visited_meshes.insert(mesh);
 		}
 	});
 	AddWidget(&recenterButton);
@@ -333,12 +343,14 @@ void MeshWindow::Create(EditorComponent* _editor)
 	recenterToBottomButton.SetPos(XMFLOAT2(mod_x, y += step));
 	recenterToBottomButton.OnClick([&](wi::gui::EventArgs args) {
 		wi::scene::Scene& scene = editor->GetCurrentScene();
+		wi::unordered_set<MeshComponent*> visited_meshes; // fix double visit (straight mesh + object->mesh)
 		for (auto& x : editor->translator.selected)
 		{
 			MeshComponent* mesh = get_mesh(scene, x);
-			if (mesh == nullptr)
+			if (mesh == nullptr || visited_meshes.count(mesh) > 0)
 				continue;
 			mesh->RecenterToBottom();
+			visited_meshes.insert(mesh);
 		}
 	});
 	AddWidget(&recenterToBottomButton);
@@ -352,11 +364,14 @@ void MeshWindow::Create(EditorComponent* _editor)
 		ObjectComponent merged_object;
 		MeshComponent merged_mesh;
 		bool valid_normals = false;
+		bool valid_tangents = false;
 		bool valid_uvset_0 = false;
 		bool valid_uvset_1 = false;
 		bool valid_atlas = false;
 		bool valid_boneindices = false;
 		bool valid_boneweights = false;
+		bool valid_boneindices2 = false;
+		bool valid_boneweights2 = false;
 		bool valid_colors = false;
 		bool valid_windweights = false;
 		wi::unordered_set<Entity> entities_to_remove;
@@ -439,6 +454,18 @@ void MeshWindow::Create(EditorComponent* _editor)
 					XMStoreFloat3(&merged_mesh.vertex_normals.back(), XMVector3TransformNormal(XMLoadFloat3(&merged_mesh.vertex_normals.back()), W));
 				}
 
+				if (mesh->vertex_tangents.empty())
+				{
+					merged_mesh.vertex_tangents.emplace_back();
+				}
+				else
+				{
+					valid_tangents = true;
+					merged_mesh.vertex_tangents.push_back(mesh->vertex_tangents[i]);
+					XMFLOAT3* tan = (XMFLOAT3*)&merged_mesh.vertex_tangents.back();
+					XMStoreFloat3(tan, XMVector3TransformNormal(XMLoadFloat3(tan), W));
+				}
+
 				if (mesh->vertex_uvset_0.empty())
 				{
 					merged_mesh.vertex_uvset_0.emplace_back();
@@ -487,6 +514,26 @@ void MeshWindow::Create(EditorComponent* _editor)
 				{
 					valid_boneweights = true;
 					merged_mesh.vertex_boneweights.push_back(mesh->vertex_boneweights[i]);
+				}
+
+				if (mesh->vertex_boneindices2.empty())
+				{
+					merged_mesh.vertex_boneindices2.emplace_back();
+				}
+				else
+				{
+					valid_boneindices2 = true;
+					merged_mesh.vertex_boneindices2.push_back(mesh->vertex_boneindices2[i]);
+				}
+
+				if (mesh->vertex_boneweights2.empty())
+				{
+					merged_mesh.vertex_boneweights2.emplace_back();
+				}
+				else
+				{
+					valid_boneweights2 = true;
+					merged_mesh.vertex_boneweights2.push_back(mesh->vertex_boneweights2[i]);
 				}
 
 				if (mesh->vertex_colors.empty())
@@ -542,6 +589,8 @@ void MeshWindow::Create(EditorComponent* _editor)
 		{
 			if (!valid_normals)
 				merged_mesh.vertex_normals.clear();
+			if (!valid_tangents)
+				merged_mesh.vertex_tangents.clear();
 			if (!valid_uvset_0)
 				merged_mesh.vertex_uvset_0.clear();
 			if (!valid_uvset_1)
@@ -552,6 +601,10 @@ void MeshWindow::Create(EditorComponent* _editor)
 				merged_mesh.vertex_boneindices.clear();
 			if (!valid_boneweights)
 				merged_mesh.vertex_boneweights.clear();
+			if (!valid_boneindices2)
+				merged_mesh.vertex_boneindices2.clear();
+			if (!valid_boneweights2)
+				merged_mesh.vertex_boneweights2.clear();
 			if (!valid_colors)
 				merged_mesh.vertex_colors.clear();
 			if (!valid_windweights)
@@ -982,15 +1035,18 @@ void MeshWindow::SetEntity(Entity entity, int subset)
 		if (!mesh->vertex_positions.empty()) ss += "\tposition;\n";
 		if (!mesh->vertex_normals.empty()) ss += "\tnormal;\n";
 		if (!mesh->vertex_windweights.empty()) ss += "\twind;\n";
-		if (mesh->vb_uvs.IsValid()) ss += "\tuvsets;\n";
-		if (mesh->vb_atl.IsValid()) ss += "\tatlas;\n";
-		if (mesh->vb_col.IsValid()) ss += "\tcolor;\n";
-		if (mesh->so_pre.IsValid()) ss += "\tprevious_position;\n";
-		if (mesh->vb_bon.IsValid()) ss += "\tbone;\n";
-		if (mesh->vb_tan.IsValid()) ss += "\ttangent;\n";
+		if (!mesh->vertex_uvset_0.empty()) ss += "\tuvset0;\n";
+		if (!mesh->vertex_uvset_1.empty()) ss += "\tuvset1;\n";
+		if (!mesh->vertex_atlas.empty()) ss += "\tatlas;\n";
+		if (!mesh->vertex_colors.empty()) ss += "\tcolor;\n";
+		if (!mesh->vertex_boneindices.empty()) ss += "\tbone 4 influence;\n";
+		if (!mesh->vertex_boneindices2.empty()) ss += "\tbone 8 influence;\n";
+		if (!mesh->vertex_tangents.empty()) ss += "\ttangent;\n";
+		if (!mesh->vertex_windweights.empty()) ss += "\twind weights;\n";
 		if (mesh->so_pos.IsValid()) ss += "\tstreamout_position;\n";
 		if (mesh->so_nor.IsValid()) ss += "\tstreamout_normals;\n";
 		if (mesh->so_tan.IsValid()) ss += "\tstreamout_tangents;\n";
+		if (mesh->so_pre.IsValid()) ss += "\tprevious_position;\n";
 		meshInfoLabel.SetText(ss);
 
 		subsetComboBox.ClearItems();

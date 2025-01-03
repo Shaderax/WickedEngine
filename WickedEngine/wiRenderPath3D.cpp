@@ -88,8 +88,8 @@ namespace wi
 		GraphicsDevice* device = wi::graphics::GetDevice();
 
 		XMUINT2 internalResolution = GetInternalResolution();
-
-		camera->CreatePerspective((float)internalResolution.x, (float)internalResolution.y, camera->zNearP, camera->zFarP, camera->fov);
+		camera->width = (float)internalResolution.x;
+		camera->height = (float)internalResolution.y;
 
 		// Render targets:
 
@@ -418,16 +418,12 @@ namespace wi
 		if (getFSR2Enabled())
 		{
 			camera->jitter = fsr2Resources.GetJitter();
-			camera_reflection.jitter.x = camera->jitter.x * 2;
-			camera_reflection.jitter.y = camera->jitter.x * 2;
 		}
 		else if (wi::renderer::GetTemporalAAEnabled())
 		{
 			const XMFLOAT4& halton = wi::math::GetHaltonSequence(wi::graphics::GetDevice()->GetFrameCount() % 256);
 			camera->jitter.x = (halton.x * 2 - 1) / (float)internalResolution.x;
 			camera->jitter.y = (halton.y * 2 - 1) / (float)internalResolution.y;
-			camera_reflection.jitter.x = camera->jitter.x * 2;
-			camera_reflection.jitter.y = camera->jitter.x * 2;
 			if (!temporalAAResources.IsValid())
 			{
 				wi::renderer::CreateTemporalAAResources(temporalAAResources, internalResolution);
@@ -436,9 +432,10 @@ namespace wi
 		else
 		{
 			camera->jitter = XMFLOAT2(0, 0);
-			camera_reflection.jitter = XMFLOAT2(0, 0);
 			temporalAAResources = {};
 		}
+
+		camera_reflection.jitter = XMFLOAT2(0, 0);
 
 		camera->UpdateCamera();
 		if (visibility_main.planar_reflection_visible)
@@ -523,6 +520,8 @@ namespace wi
 			{
 				volumetriccloudResources_reflection = {};
 			}
+			volumetriccloudResources.AdvanceFrame();
+			volumetriccloudResources_reflection.AdvanceFrame();
 		}
 		else
 		{
@@ -785,7 +784,7 @@ namespace wi
 		camera_reflection.sample_count = depthBuffer_Reflection.desc.sample_count;
 		camera_reflection.shadercamera_options = SHADERCAMERA_OPTION_NONE;
 		camera_reflection.texture_primitiveID_index = -1;
-		camera_reflection.texture_depth_index = device->GetDescriptorIndex(&depthBuffer_Reflection, SubresourceType::SRV);
+		camera_reflection.texture_depth_index = device->GetDescriptorIndex(&depthBuffer_Reflection_resolved, SubresourceType::SRV);
 		camera_reflection.texture_lineardepth_index = -1;
 		camera_reflection.texture_velocity_index = -1;
 		camera_reflection.texture_normal_index = -1;
@@ -1139,6 +1138,21 @@ namespace wi
 				);
 			}
 
+			if (scene->weather.IsVolumetricClouds() && !scene->weather.IsVolumetricCloudsReceiveShadow())
+			{
+				// When volumetric cloud DOESN'T receive shadow it can be done async to shadow maps!
+				wi::renderer::Postprocess_VolumetricClouds(
+					volumetriccloudResources,
+					cmd,
+					*camera,
+					camera_previous,
+					camera_reflection,
+					wi::renderer::GetTemporalAAEnabled() || getFSR2Enabled(),
+					scene->weather.volumetricCloudsWeatherMapFirst.IsValid() ? &scene->weather.volumetricCloudsWeatherMapFirst.GetTexture() : nullptr,
+					scene->weather.volumetricCloudsWeatherMapSecond.IsValid() ? &scene->weather.volumetricCloudsWeatherMapSecond.GetTexture() : nullptr
+				);
+			}
+
 		});
 
 		// Occlusion culling:
@@ -1236,6 +1250,7 @@ namespace wi
 				);
 				wi::renderer::RefreshLightmaps(*scene, cmd);
 				wi::renderer::RefreshEnvProbes(visibility_main, cmd);
+				wi::renderer::PaintDecals(*scene, cmd);
 			});
 		}
 
@@ -1354,7 +1369,7 @@ namespace wi
 				RenderPassImage rp[] = {
 					RenderPassImage::RenderTarget(
 						&rtReflection,
-						RenderPassImage::LoadOp::DONTCARE,
+						RenderPassImage::LoadOp::CLEAR,
 						RenderPassImage::StoreOp::DONTCARE,
 						ResourceState::RENDERTARGET,
 						ResourceState::RENDERTARGET
@@ -1415,7 +1430,7 @@ namespace wi
 					wi::image::Params fx;
 					fx.enableFullScreen();
 					fx.blendFlag = BLENDMODE_PREMULTIPLIED;
-					wi::image::Draw(&volumetriccloudResources_reflection.texture_reproject[volumetriccloudResources_reflection.frame % 2], fx, cmd);
+					wi::image::Draw(&volumetriccloudResources_reflection.texture_reproject[volumetriccloudResources_reflection.GetTemporalOutputIndex()], fx, cmd);
 					device->EventEnd(cmd);
 				}
 
@@ -1458,8 +1473,9 @@ namespace wi
 						cmd
 					);
 				}
-				if (scene->weather.IsVolumetricClouds())
+				if (scene->weather.IsVolumetricClouds() && scene->weather.IsVolumetricCloudsReceiveShadow())
 				{
+					// When volumetric cloud receives shadow it must be done AFTER shadow maps!
 					wi::renderer::Postprocess_VolumetricClouds(
 						volumetriccloudResources,
 						cmd,
@@ -2033,10 +2049,6 @@ namespace wi
 	{
 		GraphicsDevice* device = wi::graphics::GetDevice();
 
-		device->EventBegin("Copy scene tex only mip0 for ocean", cmd);
-		wi::renderer::Postprocess_Downsample4x(rtMain, rtSceneCopy, cmd);
-		device->EventEnd(cmd);
-
 		// Water ripple rendering:
 		if (!scene->waterRipples.empty())
 		{
@@ -2076,6 +2088,16 @@ namespace wi
 			device->Barrier(barriers, arraysize(barriers), cmd);
 		}
 
+		Rect scissor = GetScissorInternalResolution();
+		device->BindScissorRects(1, &scissor, cmd);
+
+		Viewport vp;
+		vp.width = (float)depthBuffer_Main.GetDesc().width;
+		vp.height = (float)depthBuffer_Main.GetDesc().height;
+		vp.min_depth = 0;
+		vp.max_depth = 1;
+		device->BindViewports(1, &vp, cmd);
+
 		RenderPassImage rp[] = {
 			RenderPassImage::RenderTarget(&rtMain_render, RenderPassImage::LoadOp::LOAD),
 			RenderPassImage::DepthStencil(
@@ -2088,29 +2110,30 @@ namespace wi
 			),
 			RenderPassImage::Resolve(&rtMain),
 		};
-		device->RenderPassBegin(rp, getMSAASampleCount() > 1 ? 3 : 2, cmd);
-
-		Rect scissor = GetScissorInternalResolution();
-		device->BindScissorRects(1, &scissor, cmd);
-
-		Viewport vp;
-		vp.width = (float)depthBuffer_Main.GetDesc().width;
-		vp.height = (float)depthBuffer_Main.GetDesc().height;
-		vp.min_depth = 0;
-		vp.max_depth = 1;
-		device->BindViewports(1, &vp, cmd);
 
 		// Draw only the ocean first, fog and lightshafts will be blended on top:
-		wi::renderer::DrawScene(
-			visibility_main,
-			RENDERPASS_MAIN,
-			cmd,
-			wi::renderer::DRAWSCENE_OCEAN
-		);
+		if (scene->weather.IsOceanEnabled() && scene->ocean.IsValid() && (!scene->ocean.IsOccluded() || !wi::renderer::GetOcclusionCullingEnabled()))
+		{
+			device->EventBegin("Copy scene tex only mip0 for ocean", cmd);
+			wi::renderer::Postprocess_Downsample4x(rtMain, rtSceneCopy, cmd);
+			device->EventEnd(cmd);
 
-		device->RenderPassEnd(cmd);
+			device->RenderPassBegin(rp, getMSAASampleCount() > 1 ? 3 : 2, cmd);
 
-		RenderSceneMIPChain(cmd);
+			wi::renderer::DrawScene(
+				visibility_main,
+				RENDERPASS_MAIN,
+				cmd,
+				wi::renderer::DRAWSCENE_OCEAN
+			);
+
+			device->RenderPassEnd(cmd);
+		}
+
+		if (visibility_main.IsTransparentsVisible())
+		{
+			RenderSceneMIPChain(cmd);
+		}
 
 		device->RenderPassBegin(rp, getMSAASampleCount() > 1 ? 3 : 2, cmd);
 
@@ -2143,6 +2166,7 @@ namespace wi
 		}
 
 		// Transparent scene
+		if (visibility_main.IsTransparentsVisible())
 		{
 			auto range = wi::profiler::BeginRangeGPU("Transparent Scene", cmd);
 			device->EventBegin("Transparent Scene", cmd);
@@ -2362,6 +2386,7 @@ namespace wi
 			if (getMotionBlurEnabled() && getMotionBlurStrength() > 0 && motionblurResources.IsValid())
 			{
 				wi::renderer::Postprocess_MotionBlur(
+					scene->dt,
 					motionblurResources,
 					rt_first == nullptr ? *rt_read : *rt_first,
 					*rt_write,
@@ -2415,7 +2440,8 @@ namespace wi
 				getBloomEnabled() ? &bloomResources.texture_bloom : nullptr,
 				colorspace,
 				getTonemap(),
-				&distortion_overlay
+				&distortion_overlay,
+				getHDRCalibration()
 			);
 
 			rt_first = nullptr;
@@ -2516,16 +2542,38 @@ namespace wi
 		case RenderPath3D::AO_HBAO:
 			desc.width = internalResolution.x / 2;
 			desc.height = internalResolution.y / 2;
-			wi::renderer::CreateSSAOResources(ssaoResources, internalResolution);
 			break;
 		case RenderPath3D::AO_MSAO:
 			desc.width = internalResolution.x;
 			desc.height = internalResolution.y;
-			wi::renderer::CreateMSAOResources(msaoResources, internalResolution);
 			break;
 		case RenderPath3D::AO_RTAO:
 			desc.width = internalResolution.x;
 			desc.height = internalResolution.y;
+			break;
+		default:
+			break;
+		}
+
+		if (ComputeTextureMemorySizeInBytes(desc) > ComputeTextureMemorySizeInBytes(rtParticleDistortion.desc))
+		{
+			// There would be resource aliasing error if we proceed like this!
+			//	looks like ResizeBuffers() hasn't been called yet for the current internal resolution
+			//	if this happens, then ResizeBuffers() will be called next frame probably and then AO resources
+			//	will be created successdully
+			return;
+		}
+
+		switch (ao)
+		{
+		case RenderPath3D::AO_SSAO:
+		case RenderPath3D::AO_HBAO:
+			wi::renderer::CreateSSAOResources(ssaoResources, internalResolution);
+			break;
+		case RenderPath3D::AO_MSAO:
+			wi::renderer::CreateMSAOResources(msaoResources, internalResolution);
+			break;
+		case RenderPath3D::AO_RTAO:
 			wi::renderer::CreateRTAOResources(rtaoResources, internalResolution);
 			break;
 		default:

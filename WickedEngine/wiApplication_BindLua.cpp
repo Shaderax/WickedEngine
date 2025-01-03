@@ -14,6 +14,7 @@ namespace wi::lua
 		lunamethod(Application_BindLua, GetActivePath),
 		lunamethod(Application_BindLua, SetActivePath),
 		lunamethod(Application_BindLua, SetFrameSkip),
+		lunamethod(Application_BindLua, SetFullScreen),
 		lunamethod(Application_BindLua, SetTargetFrameRate),
 		lunamethod(Application_BindLua, SetFrameRateLock),
 		lunamethod(Application_BindLua, SetInfoDisplay),
@@ -25,6 +26,9 @@ namespace wi::lua
 		lunamethod(Application_BindLua, SetPipelineCountDisplay),
 		lunamethod(Application_BindLua, SetHeapAllocationCountDisplay),
 		lunamethod(Application_BindLua, SetVRAMUsageDisplay),
+		lunamethod(Application_BindLua, SetColorGradingHelper),
+		lunamethod(Application_BindLua, IsHDRSupported),
+		lunamethod(Application_BindLua, SetHDR),
 		lunamethod(Application_BindLua, GetCanvas),
 		lunamethod(Application_BindLua, SetCanvas),
 		lunamethod(Application_BindLua, Exit),
@@ -144,6 +148,9 @@ namespace wi::lua
 				component->ActivatePath(comp->component, fadeSeconds, fadeColor);
 				return 0;
 			}
+
+			// If first param is neither, it can be nil to unset path:
+			component->ActivatePath(nullptr);
 		}
 		else
 		{
@@ -167,6 +174,23 @@ namespace wi::lua
 		}
 		else
 			wi::lua::SError(L, "SetFrameSkip(bool enabled) not enought arguments!");
+		return 0;
+	}
+	int Application_BindLua::SetFullScreen(lua_State* L)
+	{
+		if (component == nullptr)
+		{
+			wi::lua::SError(L, "SetFullScreen(bool enabled) component is empty!");
+			return 0;
+		}
+
+		int argc = wi::lua::SGetArgCount(L);
+		if (argc > 0)
+		{
+			component->SetFullScreen(wi::lua::SGetBool(L, 1));
+		}
+		else
+			wi::lua::SError(L, "SetFullScreen(bool enabled) not enought arguments!");
 		return 0;
 	}
 	int Application_BindLua::SetTargetFrameRate(lua_State* L)
@@ -345,6 +369,47 @@ namespace wi::lua
 		}
 		else
 			wi::lua::SError(L, "SetVRAMUsageDisplay(bool active) not enough arguments!");
+		return 0;
+	}
+	int Application_BindLua::SetColorGradingHelper(lua_State* L)
+	{
+		if (component == nullptr)
+		{
+			wi::lua::SError(L, "SetColorGradingHelper() component is empty!");
+			return 0;
+		}
+		int argc = wi::lua::SGetArgCount(L);
+		if (argc > 0)
+		{
+			component->infoDisplay.colorgrading_helper = wi::lua::SGetBool(L, 1);
+		}
+		else
+			wi::lua::SError(L, "SetColorGradingHelper(bool active) not enough arguments!");
+		return 0;
+	}
+
+	int Application_BindLua::IsHDRSupported(lua_State* L)
+	{
+		wi::lua::SSetBool(L, wi::graphics::GetDevice()->IsSwapChainSupportsHDR(&component->swapChain));
+		return 1;
+	}
+	int Application_BindLua::SetHDR(lua_State* L)
+	{
+		if (component == nullptr)
+		{
+			wi::lua::SError(L, "SetHDR() component is empty!");
+			return 0;
+		}
+		int argc = wi::lua::SGetArgCount(L);
+		if (argc > 0)
+		{
+			component->allow_hdr = wi::lua::SGetBool(L, 1);
+			component->swapChain.desc.allow_hdr = component->allow_hdr;
+			bool success = wi::graphics::GetDevice()->CreateSwapChain(&component->swapChain.desc, nullptr, &component->swapChain);
+			assert(success);
+		}
+		else
+			wi::lua::SError(L, "SetHDR(bool active) not enough arguments!");
 		return 0;
 	}
 

@@ -6,9 +6,8 @@ PUSHCONSTANT(push, LightmapPushConstants);
 struct Output
 {
 	float4 pos : SV_POSITION;
-	float2 uv : TEXCOORD;
-	float3 pos3D : WORLDPOSITION;
-	float3 normal : NORMAL;
+	centroid float3 pos3D : WORLDPOSITION;
+	centroid float3 normal : NORMAL;
 };
 
 Output main(uint vertexID : SV_VertexID)
@@ -25,11 +24,9 @@ Output main(uint vertexID : SV_VertexID)
 	output.pos.y *= -1;
 	output.pos.xy += xTracePixelOffset;
 
-	output.uv = atl;
-
 	output.pos3D = mul(inst.transform.GetMatrix(), float4(pos, 1)).xyz;
 
-	output.normal = rotate_vector(nor, inst.quaternion);
+	output.normal = mul(inst.transformRaw.GetMatrixAdjoint(), nor);
 
 	return output;
 }

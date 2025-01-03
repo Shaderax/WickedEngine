@@ -28,10 +28,12 @@ namespace wi::lua
 			renderpath.camera = wi::lua::scene::GetGlobalCamera();
 			this->component = &renderpath;
 		}
+		virtual ~RenderPath3D_BindLua() = default;
 
 		int SetResolutionScale(lua_State* L);
 		int SetAO(lua_State* L);
 		int SetAOPower(lua_State* L);
+		int SetAORange(lua_State* L);
 		int SetSSREnabled(lua_State* L);
 		int SetSSGIEnabled(lua_State* L);
 		int SetRaytracedDiffuseEnabled(lua_State* L);
@@ -53,6 +55,7 @@ namespace wi::lua
 		int SetSharpenFilterEnabled(lua_State* L);
 		int SetSharpenFilterAmount(lua_State* L);
 		int SetExposure(lua_State* L);
+		int SetHDRCalibration(lua_State* L);
 		int SetMotionBlurStrength(lua_State* L);
 		int SetDepthOfFieldStrength(lua_State* L);
 		int SetLightShaftsStrength(lua_State* L);

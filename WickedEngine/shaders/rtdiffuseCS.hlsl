@@ -41,7 +41,7 @@ void main(uint2 DTid : SV_DispatchThreadID)
 
 	const float3 N = decode_oct(texture_normal[jitterPixel]);
 	const float3 P = reconstruct_position(jitterUV, depth);
-	const float3 V = normalize(GetCamera().position - P);
+	const float3 V = normalize(GetCamera().frustum_corners.screen_to_nearplane(uv) - P); // ortho support
 
 	RayPayload payload;
 	payload.data = 0;
@@ -118,7 +118,7 @@ void main(uint2 DTid : SV_DispatchThreadID)
 			}
 			else if (GetFrame().options & OPTION_BIT_SURFELGI_ENABLED && GetCamera().texture_surfelgi_index >= 0 && surfel_cellvalid(surfel_cell(P)))
 			{
-				payload.data += bindless_textures[GetCamera().texture_surfelgi_index][DTid.xy * 2].rgb * GetFrame().gi_boost;
+				payload.data += bindless_textures[GetCamera().texture_surfelgi_index][DTid.xy * 2].rgb * GetGIBoost();
 			}
 			else
 			{

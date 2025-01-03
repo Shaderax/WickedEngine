@@ -127,13 +127,12 @@ void main(uint3 Gid : SV_GroupID, uint3 DTid : SV_DispatchThreadID, uint3 GTid :
 	float fMinDepth = asfloat(uMaxDepth);
 	float fMaxDepth = asfloat(uMinDepth);
 
+	fMaxDepth = max(0.000001, fMaxDepth); // fix for AMD!!!!!!!!!
+
 	Frustum GroupFrustum;
 	AABB GroupAABB;			// frustum AABB around min-max depth in View Space
 	AABB GroupAABB_WS;		// frustum AABB in world space
 	{
-		// View space eye position is always at the origin.
-		const float3 eyePos = float3(0, 0, 0);
-		
 		// View space frustum corners:
 		float3 viewSpace[8];
 		// Top left point, near
@@ -154,13 +153,13 @@ void main(uint3 Gid : SV_GroupID, uint3 DTid : SV_DispatchThreadID, uint3 GTid :
 		viewSpace[7] = ScreenToView(float4(float2(Gid.x + 1, Gid.y + 1) * TILED_CULLING_BLOCKSIZE, fMaxDepth, 1.0f), dim_rcp).xyz;
 	
 		// Left plane
-		GroupFrustum.planes[0] = ComputePlane(viewSpace[2], eyePos, viewSpace[0]);
+		GroupFrustum.planes[0] = ComputePlane(viewSpace[2], viewSpace[0], viewSpace[4]);
 		// Right plane
-		GroupFrustum.planes[1] = ComputePlane(viewSpace[1], eyePos, viewSpace[3]);
+		GroupFrustum.planes[1] = ComputePlane(viewSpace[1], viewSpace[3], viewSpace[5]);
 		// Top plane
-		GroupFrustum.planes[2] = ComputePlane(viewSpace[0], eyePos, viewSpace[1]);
+		GroupFrustum.planes[2] = ComputePlane(viewSpace[0], viewSpace[1], viewSpace[4]);
 		// Bottom plane
-		GroupFrustum.planes[3] = ComputePlane(viewSpace[3], eyePos, viewSpace[2]);
+		GroupFrustum.planes[3] = ComputePlane(viewSpace[3], viewSpace[2], viewSpace[6]);
 		
 		// I construct an AABB around the minmax depth bounds to perform tighter culling:
 		// The frustum is asymmetric so we must consider all corners!
@@ -318,7 +317,7 @@ void main(uint3 Gid : SV_GroupID, uint3 DTid : SV_DispatchThreadID, uint3 GTid :
 	// This is an optimized version of the above, separated entity processing loops by type, reduces divergence and increases performance:
 
 	// Point lights:
-	for (uint i = pointlights().first_item() + groupIndex; i <= pointlights().last_item(); i += TILED_CULLING_THREADSIZE * TILED_CULLING_THREADSIZE)
+	for (uint i = pointlights().first_item() + groupIndex; i < pointlights().end_item(); i += TILED_CULLING_THREADSIZE * TILED_CULLING_THREADSIZE)
 	{
 		ShaderEntity entity = load_entity(i);
 		
@@ -343,7 +342,7 @@ void main(uint3 Gid : SV_GroupID, uint3 DTid : SV_DispatchThreadID, uint3 GTid :
 	}
 
 	// Spot lights:
-	for (uint i = spotlights().first_item() + groupIndex; i <= spotlights().last_item(); i += TILED_CULLING_THREADSIZE * TILED_CULLING_THREADSIZE)
+	for (uint i = spotlights().first_item() + groupIndex; i < spotlights().end_item(); i += TILED_CULLING_THREADSIZE * TILED_CULLING_THREADSIZE)
 	{
 		ShaderEntity entity = load_entity(i);
 		
@@ -372,7 +371,7 @@ void main(uint3 Gid : SV_GroupID, uint3 DTid : SV_DispatchThreadID, uint3 GTid :
 	}
 
 	// Directional lights:
-	for (uint i = directional_lights().first_item() + groupIndex; i <= directional_lights().last_item(); i += TILED_CULLING_THREADSIZE * TILED_CULLING_THREADSIZE)
+	for (uint i = directional_lights().first_item() + groupIndex; i < directional_lights().end_item(); i += TILED_CULLING_THREADSIZE * TILED_CULLING_THREADSIZE)
 	{
 		ShaderEntity entity = load_entity(i);
 		
@@ -383,7 +382,7 @@ void main(uint3 Gid : SV_GroupID, uint3 DTid : SV_DispatchThreadID, uint3 GTid :
 	}
 
 	// Decals:
-	for (uint i = decals().first_item() + groupIndex; i <= decals().last_item(); i += TILED_CULLING_THREADSIZE * TILED_CULLING_THREADSIZE)
+	for (uint i = decals().first_item() + groupIndex; i < decals().end_item(); i += TILED_CULLING_THREADSIZE * TILED_CULLING_THREADSIZE)
 	{
 		ShaderEntity entity = load_entity(i);
 		float3 positionVS = mul(GetCamera().view, float4(entity.position, 1)).xyz;
@@ -414,7 +413,7 @@ void main(uint3 Gid : SV_GroupID, uint3 DTid : SV_DispatchThreadID, uint3 GTid :
 	}
 
 	// Environment probes:
-	for (uint i = probes().first_item() + groupIndex; i <= probes().last_item(); i += TILED_CULLING_THREADSIZE * TILED_CULLING_THREADSIZE)
+	for (uint i = probes().first_item() + groupIndex; i < probes().end_item(); i += TILED_CULLING_THREADSIZE * TILED_CULLING_THREADSIZE)
 	{
 		ShaderEntity entity = load_entity(i);
 		float3 positionVS = mul(GetCamera().view, float4(entity.position, 1)).xyz;

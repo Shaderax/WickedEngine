@@ -16,6 +16,13 @@ namespace wi::lua
 		lunamethod(Input_BindLua, GetAnalog),
 		lunamethod(Input_BindLua, GetTouches),
 		lunamethod(Input_BindLua, SetControllerFeedback),
+		lunamethod(Input_BindLua, WhatIsPressed),
+		lunamethod(Input_BindLua, IsGamepadButton),
+		lunamethod(Input_BindLua, ButtonToString),
+		lunamethod(Input_BindLua, StringToButton),
+		lunamethod(Input_BindLua, SetCursor),
+		lunamethod(Input_BindLua, SetCursorFromFile),
+		lunamethod(Input_BindLua, ResetCursor),
 		{ NULL, NULL }
 	};
 	Luna<Input_BindLua>::PropertyType Input_BindLua::properties[] = {
@@ -197,6 +204,95 @@ namespace wi::lua
 			wi::lua::SError(L, "SetControllerFeedback(ControllerFeedback feedback, opt int playerindex = 0) not enough arguments!");
 		return 0;
 	}
+	int Input_BindLua::WhatIsPressed(lua_State* L)
+	{
+		int playerindex = 0;
+		int argc = wi::lua::SGetArgCount(L);
+		if (argc > 0)
+		{
+			playerindex = wi::lua::SGetInt(L, 1);
+		}
+		wi::lua::SSetInt(L, (int)wi::input::WhatIsPressed(playerindex));
+		return 1;
+	}
+	int Input_BindLua::IsGamepadButton(lua_State* L)
+	{
+		int argc = wi::lua::SGetArgCount(L);
+		if (argc < 1)
+		{
+			wi::lua::SError(L, "IsGamepadButton(int button) not enough arguments!");
+			return 0;
+		}
+		wi::input::BUTTON button = (wi::input::BUTTON)wi::lua::SGetInt(L, 1);
+		wi::lua::SSetBool(L, wi::input::IsGamepadButton(button));
+		return 1;
+	}
+	int Input_BindLua::ButtonToString(lua_State* L)
+	{
+		int argc = wi::lua::SGetArgCount(L);
+		if (argc > 0)
+		{
+			wi::input::BUTTON button = (wi::input::BUTTON)wi::lua::SGetInt(L, 1);
+			wi::input::CONTROLLER_PREFERENCE preference = wi::input::CONTROLLER_PREFERENCE_GENERIC;
+			if (argc > 1)
+			{
+				preference = (wi::input::CONTROLLER_PREFERENCE)wi::lua::SGetInt(L, 2);
+			}
+			wi::lua::SSetString(L, wi::input::ButtonToString(button, preference));
+			return 1;
+		}
+		wi::lua::SError(L, "ButtonToString(int button, opt int preference = CONTROLLER_PREFERENCE_GENERIC): not enough parameters!");
+		return 0;
+	}
+	int Input_BindLua::StringToButton(lua_State* L)
+	{
+		int argc = wi::lua::SGetArgCount(L);
+		if (argc > 0)
+		{
+			const char* str = wi::lua::SGetString(L, 1);
+			wi::lua::SSetInt(L, (int)wi::input::StringToButton(str));
+			return 1;
+		}
+		wi::lua::SError(L, "StringToButton(string str): not enough parameters!");
+		return 0;
+	}
+	int Input_BindLua::SetCursor(lua_State* L)
+	{
+		int argc = wi::lua::SGetArgCount(L);
+		if (argc > 0)
+		{
+			wi::input::CURSOR cursor = (wi::input::CURSOR)wi::lua::SGetInt(L, 1);
+			wi::input::SetCursor(cursor);
+			return 0;
+		}
+		wi::lua::SError(L, "SetCursor(int cursor) not enough arguments!");
+		return 0;
+	}
+	int Input_BindLua::SetCursorFromFile(lua_State* L)
+	{
+		int argc = wi::lua::SGetArgCount(L);
+		if (argc > 1)
+		{
+			wi::input::CURSOR cursor = (wi::input::CURSOR)wi::lua::SGetInt(L, 1);
+			const char* filename = wi::lua::SGetString(L, 2);
+			wi::input::SetCursorFromFile(cursor, filename);
+			return 0;
+		}
+		wi::lua::SError(L, "SetCursorFromFile(int cursor, string filename) not enough arguments!");
+		return 0;
+	}
+	int Input_BindLua::ResetCursor(lua_State* L)
+	{
+		int argc = wi::lua::SGetArgCount(L);
+		if (argc > 0)
+		{
+			wi::input::CURSOR cursor = (wi::input::CURSOR)wi::lua::SGetInt(L, 1);
+			wi::input::ResetCursor(cursor);
+			return 0;
+		}
+		wi::lua::SError(L, "ResetCursor(int cursor) not enough arguments!");
+		return 0;
+	}
 
 	void Input_BindLua::Bind()
 	{
@@ -208,6 +304,8 @@ namespace wi::lua
 
 			wi::lua::RunText(R"(
 input = Input()
+
+BUTTON_NONE = 0
 
 GAMEPAD_BUTTON_UP			= 257
 GAMEPAD_BUTTON_LEFT			= 258
@@ -228,12 +326,25 @@ GAMEPAD_BUTTON_12			= 272
 GAMEPAD_BUTTON_13			= 273
 GAMEPAD_BUTTON_14			= 274
 
+GAMEPAD_ANALOG_THUMBSTICK_L_AS_BUTTON_UP		= 275
+GAMEPAD_ANALOG_THUMBSTICK_L_AS_BUTTON_LEFT		= 276
+GAMEPAD_ANALOG_THUMBSTICK_L_AS_BUTTON_DOWN		= 277
+GAMEPAD_ANALOG_THUMBSTICK_L_AS_BUTTON_RIGHT		= 278
+GAMEPAD_ANALOG_THUMBSTICK_R_AS_BUTTON_UP		= 279
+GAMEPAD_ANALOG_THUMBSTICK_R_AS_BUTTON_LEFT		= 280
+GAMEPAD_ANALOG_THUMBSTICK_R_AS_BUTTON_DOWN		= 281
+GAMEPAD_ANALOG_THUMBSTICK_R_AS_BUTTON_RIGHT		= 282
+GAMEPAD_ANALOG_TRIGGER_L_AS_BUTTON				= 283
+GAMEPAD_ANALOG_TRIGGER_R_AS_BUTTON				= 284
+
 GAMEPAD_BUTTON_XBOX_X = GAMEPAD_BUTTON_1
 GAMEPAD_BUTTON_XBOX_A = GAMEPAD_BUTTON_2
 GAMEPAD_BUTTON_XBOX_B = GAMEPAD_BUTTON_3
 GAMEPAD_BUTTON_XBOX_Y = GAMEPAD_BUTTON_4
 GAMEPAD_BUTTON_XBOX_L1 = GAMEPAD_BUTTON_5
+GAMEPAD_BUTTON_XBOX_LT = GAMEPAD_ANALOG_TRIGGER_L_AS_BUTTON
 GAMEPAD_BUTTON_XBOX_R1 = GAMEPAD_BUTTON_6
+GAMEPAD_BUTTON_XBOX_RT = GAMEPAD_ANALOG_TRIGGER_R_AS_BUTTON
 GAMEPAD_BUTTON_XBOX_L3 = GAMEPAD_BUTTON_7
 GAMEPAD_BUTTON_XBOX_R3 = GAMEPAD_BUTTON_8
 GAMEPAD_BUTTON_XBOX_BACK = GAMEPAD_BUTTON_9
@@ -244,7 +355,9 @@ GAMEPAD_BUTTON_PLAYSTATION_CROSS = GAMEPAD_BUTTON_2
 GAMEPAD_BUTTON_PLAYSTATION_CIRCLE = GAMEPAD_BUTTON_3
 GAMEPAD_BUTTON_PLAYSTATION_TRIANGLE = GAMEPAD_BUTTON_4
 GAMEPAD_BUTTON_PLAYSTATION_L1 = GAMEPAD_BUTTON_5
+GAMEPAD_BUTTON_PLAYSTATION_L2 = GAMEPAD_ANALOG_TRIGGER_L_AS_BUTTON
 GAMEPAD_BUTTON_PLAYSTATION_R1 = GAMEPAD_BUTTON_6
+GAMEPAD_BUTTON_PLAYSTATION_R2 = GAMEPAD_ANALOG_TRIGGER_R_AS_BUTTON
 GAMEPAD_BUTTON_PLAYSTATION_L3 = GAMEPAD_BUTTON_7
 GAMEPAD_BUTTON_PLAYSTATION_R3 = GAMEPAD_BUTTON_8
 GAMEPAD_BUTTON_PLAYSTATION_SHARE = GAMEPAD_BUTTON_9
@@ -261,56 +374,78 @@ TOUCHSTATE_PRESSED			= 0
 TOUCHSTATE_RELEASED			= 1
 TOUCHSTATE_MOVED			= 2
 
-MOUSE_BUTTON_LEFT			= 276
-MOUSE_BUTTON_RIGHT			= 277
-MOUSE_BUTTON_MIDDLE			= 278
+MOUSE_BUTTON_LEFT			= 513
+MOUSE_BUTTON_RIGHT			= 514
+MOUSE_BUTTON_MIDDLE			= 515
 
-KEYBOARD_BUTTON_UP			= 279
-KEYBOARD_BUTTON_DOWN		= 280
-KEYBOARD_BUTTON_LEFT		= 281
-KEYBOARD_BUTTON_RIGHT		= 282
-KEYBOARD_BUTTON_SPACE		= 283
-KEYBOARD_BUTTON_RSHIFT		= 284
-KEYBOARD_BUTTON_LSHIFT		= 285
-KEYBOARD_BUTTON_F1			= 286
-KEYBOARD_BUTTON_F2			= 287
-KEYBOARD_BUTTON_F3			= 288
-KEYBOARD_BUTTON_F4			= 289
-KEYBOARD_BUTTON_F5			= 290
-KEYBOARD_BUTTON_F6			= 291
-KEYBOARD_BUTTON_F7			= 292
-KEYBOARD_BUTTON_F8			= 293
-KEYBOARD_BUTTON_F9			= 294
-KEYBOARD_BUTTON_F10			= 295
-KEYBOARD_BUTTON_F11			= 296
-KEYBOARD_BUTTON_F12			= 297
-KEYBOARD_BUTTON_ENTER		= 298
-KEYBOARD_BUTTON_ESCAPE		= 299
-KEYBOARD_BUTTON_HOME		= 300
-KEYBOARD_BUTTON_RCONTROL	= 301
-KEYBOARD_BUTTON_LCONTROL	= 302
-KEYBOARD_BUTTON_DELETE		= 303
-KEYBOARD_BUTTON_BACK		= 304
-KEYBOARD_BUTTON_PAGEDOWN	= 305
-KEYBOARD_BUTTON_PAGEUP		= 306
-KEYBOARD_BUTTON_NUMPAD0		= 307
-KEYBOARD_BUTTON_NUMPAD1		= 308
-KEYBOARD_BUTTON_NUMPAD2		= 309
-KEYBOARD_BUTTON_NUMPAD3		= 310
-KEYBOARD_BUTTON_NUMPAD4		= 311
-KEYBOARD_BUTTON_NUMPAD5		= 312
-KEYBOARD_BUTTON_NUMPAD6		= 313
-KEYBOARD_BUTTON_NUMPAD7		= 314
-KEYBOARD_BUTTON_NUMPAD8		= 315
-KEYBOARD_BUTTON_NUMPAD9		= 316
-KEYBOARD_BUTTON_MULTIPLY	= 317
-KEYBOARD_BUTTON_ADD			= 318
-KEYBOARD_BUTTON_SEPARATOR	= 319
-KEYBOARD_BUTTON_SUBTRACT	= 320
-KEYBOARD_BUTTON_DECIMAL		= 321
-KEYBOARD_BUTTON_DIVIDE		= 322
-KEYBOARD_BUTTON_TAB			= 323
-KEYBOARD_BUTTON_TILDE		= 324
+MOUSE_SCROLL_AS_BUTTON_UP	= 516
+MOUSE_SCROLL_AS_BUTTON_DOWN	= 517
+
+KEYBOARD_BUTTON_UP			= 518
+KEYBOARD_BUTTON_DOWN		= 519
+KEYBOARD_BUTTON_LEFT		= 520
+KEYBOARD_BUTTON_RIGHT		= 521
+KEYBOARD_BUTTON_SPACE		= 522
+KEYBOARD_BUTTON_RSHIFT		= 523
+KEYBOARD_BUTTON_LSHIFT		= 524
+KEYBOARD_BUTTON_F1			= 525
+KEYBOARD_BUTTON_F2			= 526
+KEYBOARD_BUTTON_F3			= 527
+KEYBOARD_BUTTON_F4			= 528
+KEYBOARD_BUTTON_F5			= 529
+KEYBOARD_BUTTON_F6			= 530
+KEYBOARD_BUTTON_F7			= 531
+KEYBOARD_BUTTON_F8			= 532
+KEYBOARD_BUTTON_F9			= 533
+KEYBOARD_BUTTON_F10			= 534
+KEYBOARD_BUTTON_F11			= 535
+KEYBOARD_BUTTON_F12			= 536
+KEYBOARD_BUTTON_ENTER		= 537
+KEYBOARD_BUTTON_ESCAPE		= 538
+KEYBOARD_BUTTON_HOME		= 539
+KEYBOARD_BUTTON_RCONTROL	= 540
+KEYBOARD_BUTTON_LCONTROL	= 541
+KEYBOARD_BUTTON_DELETE		= 542
+KEYBOARD_BUTTON_BACK		= 543
+KEYBOARD_BUTTON_PAGEDOWN	= 544
+KEYBOARD_BUTTON_PAGEUP		= 545
+KEYBOARD_BUTTON_NUMPAD0		= 546
+KEYBOARD_BUTTON_NUMPAD1		= 547
+KEYBOARD_BUTTON_NUMPAD2		= 548
+KEYBOARD_BUTTON_NUMPAD3		= 549
+KEYBOARD_BUTTON_NUMPAD4		= 550
+KEYBOARD_BUTTON_NUMPAD5		= 551
+KEYBOARD_BUTTON_NUMPAD6		= 552
+KEYBOARD_BUTTON_NUMPAD7		= 553
+KEYBOARD_BUTTON_NUMPAD8		= 554
+KEYBOARD_BUTTON_NUMPAD9		= 555
+KEYBOARD_BUTTON_MULTIPLY	= 556
+KEYBOARD_BUTTON_ADD			= 557
+KEYBOARD_BUTTON_SEPARATOR	= 558
+KEYBOARD_BUTTON_SUBTRACT	= 559
+KEYBOARD_BUTTON_DECIMAL		= 560
+KEYBOARD_BUTTON_DIVIDE		= 561
+KEYBOARD_BUTTON_TAB			= 562
+KEYBOARD_BUTTON_TILDE		= 563
+KEYBOARD_BUTTON_INSERT		= 564
+KEYBOARD_BUTTON_ALT			= 565
+KEYBOARD_BUTTON_ALTGR		= 566
+
+
+CONTROLLER_PREFERENCE_GENERIC = 0
+CONTROLLER_PREFERENCE_PLAYSTATION = 1
+CONTROLLER_PREFERENCE_XBOX = 2
+
+CURSOR_DEFAULT = 0
+CURSOR_TEXTINPUT = 1
+CURSOR_RESIZEALL = 2
+CURSOR_RESIZE_NS = 3
+CURSOR_RESIZE_EW = 4
+CURSOR_RESIZE_NESW = 5
+CURSOR_RESIZE_NWSE = 6
+CURSOR_HAND = 7
+CURSOR_NOTALLOWED = 8
+CURSOR_CROSS = 9
 )");
 
 		}

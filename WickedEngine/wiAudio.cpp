@@ -7,6 +7,8 @@
 #define STB_VORBIS_HEADER_ONLY
 #include "Utility/stb_vorbis.c"
 
+#include <sstream>
+
 template<typename T>
 static constexpr T AlignTo(T value, T alignment)
 {
@@ -28,6 +30,8 @@ static constexpr T AlignTo(T value, T alignment)
 #define fourccWAVE 'EVAW'
 #define fourccXWMA 'AMWX'
 #define fourccDPDS 'sdpd'
+
+#define xaudio_check(hr) wilog_assert(SUCCEEDED(hr), "XAudio2 error: %s, line %d, hr = %s", relative_path(__FILE__), __LINE__, wi::helper::GetPlatformErrorString(hr).c_str())
 
 namespace wi::audio
 {
@@ -84,10 +88,18 @@ namespace wi::audio
 
 			HRESULT hr;
 			hr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
-			assert(SUCCEEDED(hr));
+			if (!SUCCEEDED(hr))
+			{
+				wilog_error("XAudio2: CoInitializeEx returned error: %s", wi::helper::GetPlatformErrorString(hr).c_str());
+				return;
+			}
 
 			hr = XAudio2Create(&audioEngine, 0, XAUDIO2_USE_DEFAULT_PROCESSOR);
-			assert(SUCCEEDED(hr));
+			if (!SUCCEEDED(hr))
+			{
+				wilog_error("XAudio2: XAudio2Create returned error: %s", wi::helper::GetPlatformErrorString(hr).c_str());
+				return;
+			}
 
 #ifdef _DEBUG
 			XAUDIO2_DEBUG_CONFIGURATION debugConfig = {};
@@ -97,11 +109,9 @@ namespace wi::audio
 #endif // _DEBUG
 
 			hr = audioEngine->CreateMasteringVoice(&masteringVoice);
-			assert(SUCCEEDED(hr));
-
-			if (masteringVoice == nullptr)
+			if (!SUCCEEDED(hr))
 			{
-				wi::backlog::post("Failed to create XAudio2 mastering voice!");
+				wilog_error("XAudio2: CreateMasteringVoice returned error: %s", wi::helper::GetPlatformErrorString(hr).c_str());
 				return;
 			}
 
@@ -117,19 +127,36 @@ namespace wi::audio
 					&submixVoices[i],
 					masteringVoiceDetails.InputChannels,
 					masteringVoiceDetails.InputSampleRate,
-					0, 0, 0, 0);
-				assert(SUCCEEDED(hr));
+					0,
+					0,
+					0,
+					0
+				);
+
+				if (!SUCCEEDED(hr))
+				{
+					wilog_error("XAudio2: CreateSubmixVoice returned error: %s", wi::helper::GetPlatformErrorString(hr).c_str());
+					return;
+				}
 			}
 
 			DWORD channelMask;
 			masteringVoice->GetChannelMask(&channelMask);
 			hr = X3DAudioInitialize(channelMask, X3DAUDIO_SPEED_OF_SOUND, audio3D);
-			assert(SUCCEEDED(hr));
+			if (!SUCCEEDED(hr))
+			{
+				wilog_error("XAudio2: X3DAudioInitialize returned error: %s", wi::helper::GetPlatformErrorString(hr).c_str());
+				return;
+			}
 
 			// Reverb setup:
 			{
 				hr = XAudio2CreateReverb(&reverbEffect);
-				assert(SUCCEEDED(hr));
+				if (!SUCCEEDED(hr))
+				{
+					wilog_error("XAudio2: XAudio2CreateReverb returned error: %s", wi::helper::GetPlatformErrorString(hr).c_str());
+					return;
+				}
 
 				XAUDIO2_EFFECT_DESCRIPTOR effects[] = { { reverbEffect.Get(), TRUE, 1 } };
 				XAUDIO2_EFFECT_CHAIN effectChain = { arraysize(effects), effects };
@@ -137,19 +164,24 @@ namespace wi::audio
 					&reverbSubmix,
 					1, // reverb is mono
 					masteringVoiceDetails.InputSampleRate,
-					0, 0, nullptr, &effectChain);
-				assert(SUCCEEDED(hr));
-
-				if (reverbSubmix != nullptr)
+					0,
+					0,
+					nullptr,
+					&effectChain
+				);
+				if (!SUCCEEDED(hr))
 				{
-					XAUDIO2FX_REVERB_PARAMETERS native;
-					ReverbConvertI3DL2ToNative(&reverbPresets[REVERB_PRESET_DEFAULT], &native);
-					HRESULT hr = reverbSubmix->SetEffectParameters(0, &native, sizeof(native));
-					assert(SUCCEEDED(hr));
+					wilog_error("XAudio2: CreateSubmixVoice returned error: %s", wi::helper::GetPlatformErrorString(hr).c_str());
+					return;
 				}
-				else
+
+				XAUDIO2FX_REVERB_PARAMETERS native;
+				ReverbConvertI3DL2ToNative(&reverbPresets[REVERB_PRESET_DEFAULT], &native);
+				HRESULT hr = reverbSubmix->SetEffectParameters(0, &native, sizeof(native));
+				if (!SUCCEEDED(hr))
 				{
-					wi::backlog::post("wi::audio [XAudio2] Reverb Submix was not created successfully!", wi::backlog::LogLevel::Warning);
+					wilog_error("XAudio2: SetEffectParameters returned error: %s", wi::helper::GetPlatformErrorString(hr).c_str());
+					return;
 				}
 			}
 
@@ -157,14 +189,11 @@ namespace wi::audio
 			termination_mark.pAudioData = (const BYTE*)&termination_data;
 			termination_mark.AudioBytes = sizeof(termination_data);
 
-			if (SUCCEEDED(hr))
-			{
-				wi::backlog::post("wi::audio Initialized [XAudio2] (" + std::to_string((int)std::round(timer.elapsed())) + " ms)");
-			}
+			success = true;
+			wilog("wi::audio Initialized [XAudio2] (%d ms)", (int)std::round(timer.elapsed()));
 		}
 		~AudioInternal()
 		{
-
 			if (reverbSubmix != nullptr)
 				reverbSubmix->DestroyVoice();
 
@@ -181,6 +210,8 @@ namespace wi::audio
 
 			CoUninitialize();
 		}
+
+		constexpr bool IsValid() const { return success; }
 	};
 	static std::shared_ptr<AudioInternal> audio_internal;
 
@@ -326,6 +357,8 @@ namespace wi::audio
 	}
 	bool CreateSound(const uint8_t* data, size_t size, Sound* sound)
 	{
+		if (audio_internal == nullptr || !audio_internal->IsValid())
+			return false;
 		std::shared_ptr<SoundInternal> soundinternal = std::make_shared<SoundInternal>();
 		soundinternal->audio = audio_internal;
 		sound->internal_state = soundinternal;
@@ -398,6 +431,10 @@ namespace wi::audio
 	}
 	bool CreateSoundInstance(const Sound* sound, SoundInstance* instance)
 	{
+		if (audio_internal == nullptr || !audio_internal->IsValid())
+			return false;
+		if (sound == nullptr || !sound->IsValid())
+			return false;
 		HRESULT hr;
 		const auto& soundinternal = std::static_pointer_cast<SoundInternal>(sound->internal_state);
 		std::shared_ptr<SoundInstanceInternal> instanceinternal = std::make_shared<SoundInstanceInternal>();
@@ -417,9 +454,9 @@ namespace wi::audio
 
 		hr = instanceinternal->audio->audioEngine->CreateSourceVoice(&instanceinternal->sourceVoice, &soundinternal->wfx,
 			0, XAUDIO2_DEFAULT_FREQ_RATIO, instanceinternal.get(), &SFXSendList, NULL);
+		xaudio_check(hr);
 		if (FAILED(hr))
 		{
-			assert(0);
 			return false;
 		}
 
@@ -458,9 +495,9 @@ namespace wi::audio
 		instanceinternal->buffer.LoopCount = instance->IsLooped() ? XAUDIO2_LOOP_INFINITE : 0;
 
 		hr = instanceinternal->sourceVoice->SubmitSourceBuffer(&instanceinternal->buffer);
+		xaudio_check(hr);
 		if (FAILED(hr))
 		{
-			assert(0);
 			return false;
 		}
 
@@ -472,7 +509,7 @@ namespace wi::audio
 		{
 			auto instanceinternal = to_internal(instance);
 			HRESULT hr = instanceinternal->sourceVoice->Start();
-			assert(SUCCEEDED(hr));
+			xaudio_check(hr);
 		}
 	}
 	void Pause(SoundInstance* instance)
@@ -481,7 +518,7 @@ namespace wi::audio
 		{
 			auto instanceinternal = to_internal(instance);
 			HRESULT hr = instanceinternal->sourceVoice->Stop(); // preserves cursor position
-			assert(SUCCEEDED(hr));
+			xaudio_check(hr);
 		}
 	}
 	void Stop(SoundInstance* instance)
@@ -490,16 +527,16 @@ namespace wi::audio
 		{
 			auto instanceinternal = to_internal(instance);
 			HRESULT hr = instanceinternal->sourceVoice->Stop(); // preserves cursor position
-			assert(SUCCEEDED(hr));
+			xaudio_check(hr);
 			hr = instanceinternal->sourceVoice->FlushSourceBuffers(); // reset submitted audio buffer
-			assert(SUCCEEDED(hr));
+			xaudio_check(hr);
 			if (!instanceinternal->ended) // if already ended, don't submit end again, it can cause high pitched jerky sound
 			{
 				hr = instanceinternal->sourceVoice->SubmitSourceBuffer(&audio_internal->termination_mark); // mark this as terminated, this resets XAUDIO2_VOICE_STATE::SamplesPlayed to zero
-				assert(SUCCEEDED(hr));
+				xaudio_check(hr);
 			}
 			hr = instanceinternal->sourceVoice->SubmitSourceBuffer(&instanceinternal->buffer); // resubmit
-			assert(SUCCEEDED(hr));
+			xaudio_check(hr);
 		}
 	}
 	void SetVolume(float volume, SoundInstance* instance)
@@ -507,13 +544,13 @@ namespace wi::audio
 		if (instance == nullptr || !instance->IsValid())
 		{
 			HRESULT hr = audio_internal->masteringVoice->SetVolume(volume);
-			assert(SUCCEEDED(hr));
+			xaudio_check(hr);
 		}
 		else
 		{
 			auto instanceinternal = to_internal(instance);
 			HRESULT hr = instanceinternal->sourceVoice->SetVolume(volume);
-			assert(SUCCEEDED(hr));
+			xaudio_check(hr);
 		}
 	}
 	float GetVolume(const SoundInstance* instance)
@@ -538,12 +575,12 @@ namespace wi::audio
 			if (instanceinternal->buffer.LoopCount == 0)
 				return;
 			HRESULT hr = instanceinternal->sourceVoice->ExitLoop();
-			assert(SUCCEEDED(hr));
+			xaudio_check(hr);
 			if (instanceinternal->ended)
 			{
 				instanceinternal->buffer.LoopCount = 0;
 				hr = instanceinternal->sourceVoice->SubmitSourceBuffer(&instanceinternal->buffer);
-				assert(SUCCEEDED(hr));
+				xaudio_check(hr);
 			}
 		}
 	}
@@ -585,7 +622,7 @@ namespace wi::audio
 	void SetSubmixVolume(SUBMIX_TYPE type, float volume)
 	{
 		HRESULT hr = audio_internal->submixVoices[type]->SetVolume(volume);
-		assert(SUCCEEDED(hr));
+		xaudio_check(hr);
 	}
 	float GetSubmixVolume(SUBMIX_TYPE type)
 	{
@@ -640,7 +677,7 @@ namespace wi::audio
 			HRESULT hr;
 
 			hr = instanceinternal->sourceVoice->SetFrequencyRatio(settings.DopplerFactor);
-			assert(SUCCEEDED(hr));
+			xaudio_check(hr);
 
 			hr = instanceinternal->sourceVoice->SetOutputMatrix(
 				instanceinternal->audio->submixVoices[instance->type],
@@ -648,19 +685,19 @@ namespace wi::audio
 				settings.DstChannelCount, 
 				settings.pMatrixCoefficients
 			);
-			assert(SUCCEEDED(hr));
+			xaudio_check(hr);
 			
 			XAUDIO2_FILTER_PARAMETERS FilterParametersDirect = { LowPassFilter, 2.0f * sinf(X3DAUDIO_PI / 6.0f * settings.LPFDirectCoefficient), 1.0f };
 			hr = instanceinternal->sourceVoice->SetOutputFilterParameters(instanceinternal->audio->submixVoices[instance->type], &FilterParametersDirect);
-			assert(SUCCEEDED(hr));
+			xaudio_check(hr);
 
 			if (instance->IsEnableReverb() && instanceinternal->audio->reverbSubmix != nullptr)
 			{
 				hr = instanceinternal->sourceVoice->SetOutputMatrix(instanceinternal->audio->reverbSubmix, settings.SrcChannelCount, 1, &settings.ReverbLevel);
-				assert(SUCCEEDED(hr));
+				xaudio_check(hr);
 				XAUDIO2_FILTER_PARAMETERS FilterParametersReverb = { LowPassFilter, 2.0f * sinf(X3DAUDIO_PI / 6.0f * settings.LPFReverbCoefficient), 1.0f };
 				hr = instanceinternal->sourceVoice->SetOutputFilterParameters(instanceinternal->audio->reverbSubmix, &FilterParametersReverb);
-				assert(SUCCEEDED(hr));
+				xaudio_check(hr);
 			}
 		}
 	}
@@ -670,7 +707,7 @@ namespace wi::audio
 		XAUDIO2FX_REVERB_PARAMETERS native;
 		ReverbConvertI3DL2ToNative(&reverbPresets[preset], &native);
 		HRESULT hr = audio_internal->reverbSubmix->SetEffectParameters(0, &native, sizeof(native));
-		assert(SUCCEEDED(hr));
+		xaudio_check(hr);
 	}
 }
 
@@ -740,7 +777,13 @@ namespace wi::audio
 
 			uint32_t res;
 			res = FAudioCreate(&audioEngine, 0, FAUDIO_DEFAULT_PROCESSOR);
-			assert(res == 0);
+			if (res != 0)
+			{
+				std::stringstream ss("");
+				ss << "FAudioCreate returned error: " << res;
+				wi::backlog::post(ss.str(), wi::backlog::LogLevel::Error);
+				return;
+			}
 
 			res = FAudio_CreateMasteringVoice(
 				audioEngine, 
@@ -748,7 +791,13 @@ namespace wi::audio
 				FAUDIO_DEFAULT_CHANNELS, 
 				FAUDIO_DEFAULT_SAMPLERATE, 
 				0, 0, NULL);
-			assert(res == 0);
+			if (res != 0)
+			{
+				std::stringstream ss("");
+				ss << "FAudio_CreateMasteringVoice returned error: " << res;
+				wi::backlog::post(ss.str(), wi::backlog::LogLevel::Error);
+				return;
+			}
 		
 			FAudioVoice_GetVoiceDetails(masteringVoice, &masteringVoiceDetails);
 
@@ -759,19 +808,37 @@ namespace wi::audio
 					masteringVoiceDetails.InputChannels, 
 					masteringVoiceDetails.InputSampleRate, 
 					0, 0, NULL, NULL);
-				assert(res == 0);
+				if (res != 0)
+				{
+					std::stringstream ss("");
+					ss << "FAudio_CreateSubmixVoice returned error: " << res;
+					wi::backlog::post(ss.str(), wi::backlog::LogLevel::Error);
+					return;
+				}
 			}
 
 			uint32_t channelMask;
 			FAudioMasteringVoice_GetChannelMask(masteringVoice, &channelMask);
 
 			F3DAudioInitialize(channelMask, SPEED_OF_SOUND, audio3D);
-			success = (res == 0);
+			if (res != 0)
+			{
+				std::stringstream ss("");
+				ss << "F3DAudioInitialize returned error: " << res;
+				wi::backlog::post(ss.str(), wi::backlog::LogLevel::Error);
+				return;
+			}
 
 			// Reverb setup
 			{
 				res = FAudioCreateReverb(&reverbEffect, 0);
-				success = (res == 0);
+				if (res != 0)
+				{
+					std::stringstream ss("");
+					ss << "FAudioCreateReverb returned error: " << res;
+					wi::backlog::post(ss.str(), wi::backlog::LogLevel::Error);
+					return;
+				}
 
 				FAudioEffectDescriptor effects[] = { { reverbEffect, 1, 1 } };
 				FAudioEffectChain effectChain = { arraysize(effects), effects };
@@ -784,17 +851,23 @@ namespace wi::audio
 					0, 
 					0, 
 					nullptr, 
-					&effectChain);
+					&effectChain
+				);
+				if (res != 0)
+				{
+					std::stringstream ss("");
+					ss << "FAudio_CreateSubmixVoice returned error: " << res;
+					wi::backlog::post(ss.str(), wi::backlog::LogLevel::Error);
+					return;
+				}
 			}
 
 			termination_mark.Flags = FAUDIO_END_OF_STREAM;
 			termination_mark.pAudioData = (const uint8_t*)&termination_data;
 			termination_mark.AudioBytes = sizeof(termination_data);
 
-			if (success)
-			{
-				wi::backlog::post("wi::audio Initialized [FAudio] (" + std::to_string((int)std::round(timer.elapsed())) + " ms)");
-			}
+			success = true;
+			wilog("wi::audio Initialized [FAudio] (%d ms)", (int)std::round(timer.elapsed()));
 		}
 		~AudioInternal(){
 			if(reverbSubmix != nullptr)
@@ -810,6 +883,7 @@ namespace wi::audio
 
 			FAudio_StopEngine(audioEngine);
 		}
+		constexpr bool IsValid() const { return success; }
 	};
 	static std::shared_ptr<AudioInternal> audio_internal;
 
@@ -907,7 +981,10 @@ namespace wi::audio
 		}
 		return CreateSound(filedata.data(), filedata.size(), sound);
 	}
-	bool CreateSound(const uint8_t* data, size_t size, Sound* sound) {
+	bool CreateSound(const uint8_t* data, size_t size, Sound* sound)
+	{
+		if (audio_internal == nullptr || !audio_internal->IsValid())
+			return false;
 		std::shared_ptr<SoundInternal> soundinternal = std::make_shared<SoundInternal>();
 		soundinternal->audio = audio_internal;
 		sound->internal_state = soundinternal;
@@ -978,7 +1055,12 @@ namespace wi::audio
 
 		return true;
 	}
-	bool CreateSoundInstance(const Sound* sound, SoundInstance* instance) { 
+	bool CreateSoundInstance(const Sound* sound, SoundInstance* instance)
+	{
+		if (audio_internal == nullptr || !audio_internal->IsValid())
+			return false;
+		if (sound == nullptr || !sound->IsValid())
+			return false;
 		uint32_t res;
 		const auto& soundinternal = std::static_pointer_cast<SoundInternal>(sound->internal_state);
 		std::shared_ptr<SoundInstanceInternal> instanceinternal = std::make_shared<SoundInstanceInternal>();

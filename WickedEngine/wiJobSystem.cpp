@@ -37,9 +37,7 @@ namespace wi::jobsystem
 			args.groupID = groupID;
 			if (sharedmemory_size > 0)
 			{
-				thread_local static wi::vector<uint8_t> shared_allocation_data;
-				shared_allocation_data.reserve(sharedmemory_size);
-				args.sharedmemory = shared_allocation_data.data();
+				args.sharedmemory = alloca(sharedmemory_size);
 			}
 			else
 			{
@@ -311,14 +309,12 @@ namespace wi::jobsystem
 
 #undef handle_error_en
 #elif defined(PLATFORM_PS5)
-				wi::jobsystem::ps5::SetupWorker(worker, threadID);
+				wi::jobsystem::ps5::SetupWorker(worker, threadID, core, priority);
 #endif // _WIN32
 			}
 		}
 
-		char msg[256] = {};
-		snprintf(msg, arraysize(msg), "wi::jobsystem Initialized with %d cores in %.2f ms\n\tHigh priority threads: %d\n\tLow priority threads: %d\n\tStreaming threads: %d", internal_state.numCores, timer.elapsed(), GetThreadCount(Priority::High), GetThreadCount(Priority::Low), GetThreadCount(Priority::Streaming));
-		wi::backlog::post(msg);
+		wilog("wi::jobsystem Initialized with %d cores in %.2f ms\n\tHigh priority threads: %d\n\tLow priority threads: %d\n\tStreaming threads: %d", internal_state.numCores, timer.elapsed(), GetThreadCount(Priority::High), GetThreadCount(Priority::Low), GetThreadCount(Priority::Streaming));
 	}
 
 	void ShutDown()

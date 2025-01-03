@@ -32,6 +32,7 @@ namespace wi::texturehelper
 		HELPERTEXTURE_WHITE,
 		HELPERTEXTURE_TRANSPARENT,
 		HELPERTEXTURE_NORMALMAPDEFAULT,
+		HELPERTEXTURE_CHECKERBOARD,
 		HELPERTEXTURE_COUNT
 	};
 	wi::graphics::Texture helperTextures[HELPERTEXTURE_COUNT];
@@ -175,6 +176,17 @@ namespace wi::texturehelper
 			device->SetName(&helperTextures[HELPERTEXTURE_WATERRIPPLE], "HELPERTEXTURE_WATERRIPPLE");
 		}
 
+		// Checkerboard:
+		{
+			wi::Color checker[] = {
+				wi::Color(255,255,255,255), wi::Color(127,127,127,255),
+				wi::Color(127,127,127,255), wi::Color(255,255,255,255),
+			};
+
+			CreateTexture(helperTextures[HELPERTEXTURE_CHECKERBOARD], checker, 2, 2, Format::R8G8B8A8_UNORM);
+			device->SetName(&helperTextures[HELPERTEXTURE_CHECKERBOARD], "HELPERTEXTURE_CHECKERBOARD");
+		}
+
 		// Single colors:
 		{
 			wi::Color color = wi::Color::Black();
@@ -194,7 +206,7 @@ namespace wi::texturehelper
 			device->SetName(&helperTextures[HELPERTEXTURE_NORMALMAPDEFAULT], "HELPERTEXTURE_NORMALMAPDEFAULT");
 		}
 
-		wi::backlog::post("wi::texturehelper Initialized (" + std::to_string((int)std::round(timer.elapsed())) + " ms)");
+		wilog("wi::texturehelper Initialized (%d ms)", (int)std::round(timer.elapsed()));
 	}
 
 	const Texture* getLogo()
@@ -228,6 +240,10 @@ namespace wi::texturehelper
 	const Texture* getWaterRipple()
 	{
 		return &helperTextures[HELPERTEXTURE_WATERRIPPLE];
+	}
+	const Texture* getCheckerBoard()
+	{
+		return &helperTextures[HELPERTEXTURE_CHECKERBOARD];
 	}
 	const Texture* getWhite()
 	{

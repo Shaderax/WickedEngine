@@ -131,6 +131,7 @@ namespace wi::scene
 			PREFER_UNCOMPRESSED_TEXTURES = 1 << 13,
 			DISABLE_VERTEXAO = 1 << 14,
 			DISABLE_TEXTURE_STREAMING = 1 << 15,
+			COPLANAR_BLENDING = 1 << 16, // force transparent material draw in opaque pass (useful for coplanar polygons)
 		};
 		uint32_t _flags = CAST_SHADOW;
 
@@ -237,6 +238,7 @@ namespace wi::scene
 
 			// Non-serialized attributes:
 			float lod_clamp = 0;						// optional, can be used by texture streaming
+			uint32_t virtual_anisotropy = 0;			// optional, can be used by texture streaming
 			int sparse_residencymap_descriptor = -1;	// optional, can be used by texture streaming
 			int sparse_feedbackmap_descriptor = -1;		// optional, can be used by texture streaming
 		};
@@ -286,6 +288,7 @@ namespace wi::scene
 		inline bool IsPreferUncompressedTexturesEnabled() const { return _flags & PREFER_UNCOMPRESSED_TEXTURES; }
 		inline bool IsVertexAODisabled() const { return _flags & DISABLE_VERTEXAO; }
 		inline bool IsTextureStreamingDisabled() const { return _flags & DISABLE_TEXTURE_STREAMING; }
+		inline bool IsCoplanarBlending() const { return _flags & COPLANAR_BLENDING; }
 
 		inline void SetBaseColor(const XMFLOAT4& value) { SetDirty(); baseColor = value; }
 		inline void SetSpecularColor(const XMFLOAT4& value) { SetDirty(); specularColor = value; }
@@ -335,6 +338,7 @@ namespace wi::scene
 		inline void SetPreferUncompressedTexturesEnabled(bool value = true) { if (value) { _flags |= PREFER_UNCOMPRESSED_TEXTURES; } else { _flags &= ~PREFER_UNCOMPRESSED_TEXTURES; } CreateRenderData(true); }
 		inline void SetVertexAODisabled(bool value = true) { if (value) { _flags |= DISABLE_VERTEXAO; } else { _flags &= ~DISABLE_VERTEXAO; } }
 		inline void SetTextureStreamingDisabled(bool value = true) { if (value) { _flags |= DISABLE_TEXTURE_STREAMING; } else { _flags &= ~DISABLE_TEXTURE_STREAMING; } }
+		inline void SetCoplanarBlending(bool value = true) { if (value) { _flags |= COPLANAR_BLENDING; } else { _flags &= ~COPLANAR_BLENDING; } }
 
 		// The MaterialComponent will be written to ShaderMaterial (a struct that is optimized for GPU use)
 		void WriteShaderMaterial(ShaderMaterial* dest) const;
@@ -386,14 +390,23 @@ namespace wi::scene
 		wi::vector<uint8_t> vertex_windweights;
 		wi::vector<uint32_t> indices;
 
+		enum MESH_SUBSET_FLAGS
+		{
+			MESH_SUBSET_DOUBLESIDED = 1 << 0,
+		};
+
 		struct MeshSubset
 		{
+			std::string surfaceName; // custom identifier for user, not used by engine
 			wi::ecs::Entity materialID = wi::ecs::INVALID_ENTITY;
 			uint32_t indexOffset = 0;
 			uint32_t indexCount = 0;
 
 			// Non-serialized attributes:
 			uint32_t materialIndex = 0;
+			uint32_t flags = 0;
+
+			constexpr bool IsDoubleSided() const { return flags & MESH_SUBSET_DOUBLESIDED; }
 		};
 		wi::vector<MeshSubset> subsets;
 
@@ -661,11 +674,29 @@ namespace wi::scene
 			}
 			static constexpr wi::graphics::Format FORMAT = wi::graphics::Format::R16G16_UNORM;
 		};
+		struct Vertex_TEX32
+		{
+			float x = 0;
+			float y = 0;
+
+			constexpr void FromFULL(const XMFLOAT2& uv, const XMFLOAT2& uv_range_min = XMFLOAT2(0, 0), const XMFLOAT2& uv_range_max = XMFLOAT2(1, 1))
+			{
+				x = wi::math::InverseLerp(uv_range_min.x, uv_range_max.x, uv.x);
+				y = wi::math::InverseLerp(uv_range_min.y, uv_range_max.y, uv.y);
+			}
+			static constexpr wi::graphics::Format FORMAT = wi::graphics::Format::R32G32_FLOAT;
+		};
 		struct Vertex_UVS
 		{
 			Vertex_TEX uv0;
 			Vertex_TEX uv1;
 			static constexpr wi::graphics::Format FORMAT = wi::graphics::Format::R16G16B16A16_UNORM;
+		};
+		struct Vertex_UVS32
+		{
+			Vertex_TEX32 uv0;
+			Vertex_TEX32 uv1;
+			static constexpr wi::graphics::Format FORMAT = wi::graphics::Format::R32G32B32A32_FLOAT;
 		};
 		struct Vertex_BON
 		{
@@ -833,6 +864,7 @@ namespace wi::scene
 		// Non-serialized attributes:
 		uint32_t filterMaskDynamic = 0;
 
+		wi::graphics::Texture lightmap_render;
 		wi::graphics::Texture lightmap;
 		mutable uint32_t lightmapIterationCount = 0;
 		wi::graphics::GPUBuffer vb_ao;
@@ -1137,6 +1169,7 @@ namespace wi::scene
 			EMPTY = 0,
 			DIRTY = 1 << 0,
 			CUSTOM_PROJECTION = 1 << 1,
+			ORTHO = 1 << 2,
 		};
 		uint32_t _flags = EMPTY;
 
@@ -1148,6 +1181,7 @@ namespace wi::scene
 		float focal_length = 1;
 		float aperture_size = 0;
 		XMFLOAT2 aperture_shape = XMFLOAT2(1, 1);
+		float ortho_vertical_size = 1;
 
 		// Non-serialized attributes:
 		XMFLOAT3 Eye = XMFLOAT3(0, 0, 0);
@@ -1185,6 +1219,7 @@ namespace wi::scene
 		int texture_reprojected_depth_index = -1;
 		uint shadercamera_options = SHADERCAMERA_OPTION_NONE;
 
+		void CreateOrtho(float newWidth, float newHeight, float newNear, float newFar, float newVerticalSize = 1);
 		void CreatePerspective(float newWidth, float newHeight, float newNear, float newFar, float newFOV = XM_PI / 3.0f);
 		void UpdateCamera();
 		void TransformCamera(const XMMATRIX& W);
@@ -1202,10 +1237,15 @@ namespace wi::scene
 		inline XMMATRIX GetViewProjection() const { return XMLoadFloat4x4(&VP); }
 		inline XMMATRIX GetInvViewProjection() const { return XMLoadFloat4x4(&InvVP); }
 
+		// Returns the vertical size of ortho projection that matches the perspective size at given distance
+		float ComputeOrthoVerticalSizeFromPerspective(float dist);
+
 		inline void SetDirty(bool value = true) { if (value) { _flags |= DIRTY; } else { _flags &= ~DIRTY; } }
 		inline void SetCustomProjectionEnabled(bool value = true) { if (value) { _flags |= CUSTOM_PROJECTION; } else { _flags &= ~CUSTOM_PROJECTION; } }
+		inline void SetOrtho(bool value = true) { if (value) { _flags |= ORTHO; } else { _flags &= ~ORTHO; } SetDirty(); }
 		inline bool IsDirty() const { return _flags & DIRTY; }
 		inline bool IsCustomProjectionEnabled() const { return _flags & CUSTOM_PROJECTION; }
+		inline bool IsOrtho() const { return _flags & ORTHO; }
 
 		void Lerp(const CameraComponent& a, const CameraComponent& b, float t);
 
@@ -1994,7 +2034,8 @@ namespace wi::scene
 		XMFLOAT4 lookAtDeltaRotationState_LeftEye = XMFLOAT4(0, 0, 0, 1);
 		XMFLOAT4 lookAtDeltaRotationState_RightEye = XMFLOAT4(0, 0, 0, 1);
 		std::shared_ptr<void> ragdoll = nullptr; // physics system implementation-specific object
-		mutable float default_facing = 0; // 0 = not yet computed
+		float default_facing = 0; // 0 = not yet computed, otherwise Z direction
+		float knee_bending = 0; // 0 = not yet computed, otherwise Z direction
 
 		// Things for ragdoll intersection tests:
 		struct RagdollBodypart
@@ -2126,6 +2167,7 @@ namespace wi::scene
 		float water_vertical_offset = 0;
 		XMFLOAT3 movement = XMFLOAT3(0, 0, 0);
 		XMFLOAT3 velocity = XMFLOAT3(0, 0, 0);
+		XMFLOAT3 inertia = XMFLOAT3(0, 0, 0);
 		XMFLOAT3 position = XMFLOAT3(0, 0, 0);
 		XMFLOAT3 position_prev = XMFLOAT3(0, 0, 0);
 		XMFLOAT3 relative_offset = XMFLOAT3(0, 0, 0);
@@ -2139,6 +2181,7 @@ namespace wi::scene
 		bool ground_intersect = false;
 		bool wall_intersect = false;
 		bool swimming = false;
+		bool humanoid_checked = false;
 		wi::ecs::Entity humanoidEntity = wi::ecs::INVALID_ENTITY;
 		wi::ecs::Entity left_foot = wi::ecs::INVALID_ENTITY;
 		wi::ecs::Entity right_foot = wi::ecs::INVALID_ENTITY;

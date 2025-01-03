@@ -51,7 +51,7 @@ void main(uint3 DTid : SV_DispatchThreadID)
 	float2 screenPosition = uv_to_clipspace(uv);
 
 	float currentCloudLinearDepth = cloud_depth_current.SampleLevel(sampler_point_clamp, uv, 0).x;
-	float currentCloudDepth = compute_inverse_lineardepth(currentCloudLinearDepth, GetCamera().z_near, GetCamera().z_far);
+	float currentCloudDepth = compute_inverse_lineardepth(currentCloudLinearDepth);
 	
 	float4 thisClip = float4(screenPosition, currentCloudDepth, 1.0);
 	
@@ -71,7 +71,7 @@ void main(uint3 DTid : SV_DispatchThreadID)
 	
 	bool validHistory = is_saturated(prevUV) && volumetricclouds_frame > 0;
 
-	int subPixelIndex = GetFrame().frame_count % 4;
+	int subPixelIndex = uint(volumetricclouds_frame) % 4;
 	int localIndex = (DTid.x & 1) + (DTid.y & 1) * 2;
 	int currentIndex = ComputeCheckerBoardIndex(renderCoord, subPixelIndex);
 	

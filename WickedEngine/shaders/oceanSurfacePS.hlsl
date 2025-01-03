@@ -14,11 +14,14 @@ Texture2D<float4> texture_gradientmap : register(t1);
 [earlydepthstencil]
 float4 main(PSIn input) : SV_TARGET
 {
-	float lineardepth = input.pos.w;
+	float lineardepth = GetCamera().IsOrtho() ? ((1 - input.pos.z) * GetCamera().z_far) : input.pos.w;
 	half4 color = xOceanWaterColor;
-	float3 V = GetCamera().position - input.pos3D;
+	float2 ScreenCoord = input.pos.xy * GetCamera().internal_resolution_rcp;
+	
+	float3 V = input.GetViewVector();
 	float dist = length(V);
 	V /= dist;
+	
 	uint2 pixel = input.pos.xy;
 
 	const half gradient_fade = saturate(dist * 0.001);
@@ -26,12 +29,10 @@ float4 main(PSIn input) : SV_TARGET
 	const half4 gradientFar = texture_gradientmap.Sample(sampler_aniso_wrap, input.uv * 0.125);
 	half4 gradient = lerp(gradientNear, gradientFar, gradient_fade);
 	
-	float2 ScreenCoord = pixel * GetCamera().internal_resolution_rcp;
-	
 	[branch]
 	if (GetCamera().texture_waterriples_index >= 0)
 	{
-		gradient.rg += bindless_textures_float2[GetCamera().texture_waterriples_index].SampleLevel(sampler_linear_clamp, ScreenCoord, 0).rg * 0.01;
+		gradient.rg += bindless_textures_half4[GetCamera().texture_waterriples_index].SampleLevel(sampler_linear_clamp, ScreenCoord, 0).rg * 0.025;
 	}
 
 	Surface surface;
@@ -42,7 +43,7 @@ float4 main(PSIn input) : SV_TARGET
 	surface.albedo = color.rgb;
 	surface.f0 = 0.02;
 	surface.roughness = 0.1;
-	surface.P = input.pos3D;
+	surface.P = input.GetPos3D();
 	surface.N = normalize(float3(gradient.x, xOceanTexelLength * 2, gradient.y));
 	surface.V = V;
 	surface.sss = 1;
@@ -63,7 +64,7 @@ float4 main(PSIn input) : SV_TARGET
 	if (GetCamera().texture_reflection_index >= 0)
 	{
 		//REFLECTION
-		float4 reflectionPos = mul(GetCamera().reflection_view_projection, float4(input.pos3D, 1));
+		float4 reflectionPos = mul(GetCamera().reflection_view_projection, float4(surface.P, 1));
 		float2 reflectionUV = clipspace_to_uv(reflectionPos.xy / reflectionPos.w) + surface.N.xz * bump_strength;
 		half4 reflectiveColor = bindless_textures[GetCamera().texture_reflection_index].SampleLevel(sampler_linear_mirror, reflectionUV, 0);
 		[branch]
@@ -96,7 +97,7 @@ float4 main(PSIn input) : SV_TARGET
 		float3 refraction_position = reconstruct_position(refraction_uv, refraction_depth);
 		water_depth = -dot(float4(refraction_position, 1), water_plane);
 		water_depth += texture_ocean_displacementmap.SampleLevel(sampler_linear_wrap, refraction_position.xz * xOceanPatchSizeRecip, 0).z; // texture contains xzy!
-		if (camera_above_water)
+		if (camera_above_water && V.y < 0)
 			water_depth = -water_depth;
 		if (water_depth <= 0)
 		{
@@ -114,7 +115,7 @@ float4 main(PSIn input) : SV_TARGET
 		refraction_position = reconstruct_position(refraction_uv, refraction_depth);
 		water_depth = max(water_depth, -dot(float4(refraction_position, 1), water_plane));
 		water_depth += texture_ocean_displacementmap.SampleLevel(sampler_linear_wrap, refraction_position.xz * xOceanPatchSizeRecip, 0).z; // texture contains xzy!
-		if (camera_above_water)
+		if (camera_above_water && V.y < 0)
 			water_depth = -water_depth;
 		// Water fog computation:
 		float waterfog = saturate(exp(-water_depth * color.a));

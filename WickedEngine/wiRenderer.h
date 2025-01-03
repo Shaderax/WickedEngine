@@ -145,6 +145,7 @@ namespace wi::renderer
 		float closestRefPlane = std::numeric_limits<float>::max();
 		XMFLOAT4 reflectionPlane = XMFLOAT4(0, 1, 0, 0);
 		std::atomic_bool volumetriclight_request{ false };
+		std::atomic_bool transparents_visible{ false };
 
 		void Clear()
 		{
@@ -161,6 +162,7 @@ namespace wi::renderer
 			closestRefPlane = std::numeric_limits<float>::max();
 			planar_reflection_visible = false;
 			volumetriclight_request.store(false);
+			transparents_visible.store(false);
 		}
 
 		bool IsRequestedPlanarReflections() const
@@ -170,6 +172,10 @@ namespace wi::renderer
 		bool IsRequestedVolumetricLights() const
 		{
 			return volumetriclight_request.load();
+		}
+		bool IsTransparentsVisible() const
+		{
+			return transparents_visible.load();
 		}
 	};
 
@@ -242,7 +248,7 @@ namespace wi::renderer
 		DRAWSCENE_MAINCAMERA = 1 << 9, // If this is active, then ObjectComponent with SetNotVisibleInMainCamera(true) won't be drawn
 	};
 
-	// Draw the world from a camera. You must call BindCameraCB() at least once in this frame prior to this
+	// Draw the world from a camera. You must call BindCameraCB() at least once in this command list prior to this
 	void DrawScene(
 		const Visibility& vis,
 		wi::enums::RENDERPASS renderPass,
@@ -320,6 +326,9 @@ namespace wi::renderer
 	void RefreshLightmaps(const wi::scene::Scene& scene, wi::graphics::CommandList cmd);
 	// Call once per frame to render wetmaps
 	void RefreshWetmaps(const Visibility& vis, wi::graphics::CommandList cmd);
+	// Call once per frame to render PaintDecalIntoMeshSpaceTexture requests
+	void PaintDecals(const wi::scene::Scene& scene, wi::graphics::CommandList cmd);
+
 	// Run a compute shader that will resolve a MSAA depth buffer to a single-sample texture
 	void ResolveMSAADepthBuffer(const wi::graphics::Texture& dst, const wi::graphics::Texture& src, wi::graphics::CommandList cmd);
 	void DownsampleDepthBuffer(const wi::graphics::Texture& src, wi::graphics::CommandList cmd);
@@ -738,6 +747,7 @@ namespace wi::renderer
 	};
 	void CreateMotionBlurResources(MotionBlurResources& res, XMUINT2 resolution);
 	void Postprocess_MotionBlur(
+		float dt, // delta time in seconds
 		const MotionBlurResources& res,
 		const wi::graphics::Texture& input,
 		const wi::graphics::Texture& output,
@@ -755,7 +765,7 @@ namespace wi::renderer
 	);
 	struct VolumetricCloudResources
 	{
-		mutable int frame = 0;
+		mutable int frame = -1;
 		XMUINT2 final_resolution = {};
 		wi::graphics::Texture texture_cloudRender;
 		wi::graphics::Texture texture_cloudDepth;
@@ -763,6 +773,11 @@ namespace wi::renderer
 		wi::graphics::Texture texture_reproject_depth[2];
 		wi::graphics::Texture texture_reproject_additional[2];
 		wi::graphics::Texture texture_cloudMask;
+
+		void ResetFrame() const { frame = -1; }
+		void AdvanceFrame() const { frame++; }
+		int GetTemporalOutputIndex() const { return frame % 2; }
+		int GetTemporalInputIndex() const { return 1 - GetTemporalOutputIndex(); }
 	};
 	void CreateVolumetricCloudResources(VolumetricCloudResources& res, XMUINT2 resolution);
 	void Postprocess_VolumetricClouds(
@@ -825,7 +840,8 @@ namespace wi::renderer
 		const wi::graphics::Texture* texture_bloom = nullptr,
 		wi::graphics::ColorSpace display_colorspace = wi::graphics::ColorSpace::SRGB,
 		Tonemap tonemap = Tonemap::Reinhard,
-		const wi::graphics::Texture* texture_distortion_overlay = nullptr
+		const wi::graphics::Texture* texture_distortion_overlay = nullptr,
+		float hdr_calibration = 1
 	);
 	void Postprocess_FSR(
 		const wi::graphics::Texture& input,
@@ -1209,6 +1225,21 @@ namespace wi::renderer
 	};
 	void PaintIntoTexture(const PaintTextureParams& params);
 	wi::Resource CreatePaintableTexture(uint32_t width, uint32_t height, uint32_t mips = 0, wi::Color initialColor = wi::Color::Transparent());
+
+	struct PaintDecalParams
+	{
+		wi::ecs::Entity objectEntity = wi::ecs::INVALID_ENTITY;
+		XMFLOAT4X4 decalMatrix = wi::math::IDENTITY_MATRIX;
+		wi::graphics::Texture in_texture;
+		wi::graphics::Texture out_texture;
+		float slopeBlendPower = 0;
+	};
+	// Render a decal into a texture mapped onto a mesh (supports skinned mesh)
+	//	objectEntity : entity that has an ObjectComponent in the scene
+	//	decalMatrix : decal projection matrix in world space
+	//	in_texture : texture containing the source decal
+	//	out_texture : texture containing the result decal(s) wrapped onto the object
+	void PaintDecalIntoObjectSpaceTexture(const PaintDecalParams& params);
 
 	// Add voxel grid to be drawn in debug rendering phase.
 	//	WARNING: This retains pointer until next call to DrawDebugScene(), so voxel grid must not be destroyed until then!

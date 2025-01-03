@@ -51,6 +51,7 @@ void PaintToolWindow::Create(EditorComponent* _editor)
 			infoLabel.SetText("In texture paint mode, you can paint on textures. Brush will be applied in texture space.\nREMEMBER to save texture when finished to save texture file!\nREMEMBER to save scene to retain new texture bindings on materials!");
 			break;
 		case MODE_TERRAIN_MATERIAL:
+			RecreateTerrainMaterialButtons();
 			infoLabel.SetText("You can paint terrain material layers. The paintable materials are those which are referenced by the terrain.");
 			break;
 		case MODE_VERTEXCOLOR:
@@ -1208,9 +1209,12 @@ void PaintToolWindow::Update(float dt)
 						const float weight2 = softbody->weights[i2];
 						XMVECTOR N0 = XMVectorZero(), N1 = XMVectorZero(), N2 = XMVectorZero();
 						wi::renderer::RenderableTriangle tri;
-						XMStoreFloat3(&tri.positionA, SkinVertex(*mesh, *softbody, i0, &N0) + N0 * 0.01f);
-						XMStoreFloat3(&tri.positionB, SkinVertex(*mesh, *softbody, i1, &N1) + N1 * 0.01f);
-						XMStoreFloat3(&tri.positionC, SkinVertex(*mesh, *softbody, i2, &N2) + N2 * 0.01f);
+						XMVECTOR P0 = SkinVertex(*mesh, *softbody, i0, &N0);
+						XMVECTOR P1 = SkinVertex(*mesh, *softbody, i1, &N1);
+						XMVECTOR P2 = SkinVertex(*mesh, *softbody, i2, &N2);
+						XMStoreFloat3(&tri.positionA, P0 + N0 * 0.01f);
+						XMStoreFloat3(&tri.positionB, P1 + N1 * 0.01f);
+						XMStoreFloat3(&tri.positionC, P2 + N2 * 0.01f);
 						if (weight0 == 0)
 							tri.colorA = XMFLOAT4(1, 1, 0, 1);
 						else
@@ -1949,11 +1953,10 @@ void PaintToolWindow::ResizeLayout()
 
 	if (GetMode() == MODE_TERRAIN_MATERIAL)
 	{
-		const TerrainWindow& terrainWnd = editor->componentsWnd.terrainWnd;
-		if (terrainWnd.terrain != nullptr)
+		Scene& scene = editor->GetCurrentScene();
+		if (scene.terrains.GetCount() > 0)
 		{
-			const wi::terrain::Terrain& terrain = *terrainWnd.terrain;
-			Scene& scene = editor->GetCurrentScene();
+			const wi::terrain::Terrain& terrain = scene.terrains[0];
 
 			wi::gui::Theme theme;
 			theme.image.CopyFrom(sprites[wi::gui::IDLE].params);
@@ -2025,12 +2028,12 @@ void PaintToolWindow::RecreateTerrainMaterialButtons()
 {
 	if (editor == nullptr)
 		return;
-	const TerrainWindow& terrainWnd = editor->componentsWnd.terrainWnd;
-	if (terrainWnd.terrain == nullptr)
-		return;
-	const wi::terrain::Terrain& terrain = *terrainWnd.terrain;
 
 	const wi::scene::Scene& scene = editor->GetCurrentScene();
+	if (scene.terrains.GetCount() == 0)
+		return;
+	const wi::terrain::Terrain& terrain = scene.terrains[0];
+
 	for (auto& x : terrain_material_buttons)
 	{
 		RemoveWidget(&x);

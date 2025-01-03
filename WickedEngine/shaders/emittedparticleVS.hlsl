@@ -35,11 +35,10 @@ VertextoPixel main(uint vid : SV_VertexID, uint instanceID : SV_InstanceID)
 	// Sprite sheet UV transform:
 	const float spriteframe = xEmitterFrameRate == 0 ? 
 		lerp(xEmitterFrameStart, xEmitterFrameCount, lifeLerp) : 
-		((xEmitterFrameStart + particle.life * xEmitterFrameRate) % xEmitterFrameCount);
+		((xEmitterFrameStart + (particle.maxLife - particle.life) * xEmitterFrameRate) % xEmitterFrameCount);
 	const float frameBlend = frac(spriteframe);
 
 	VertextoPixel Out;
-	Out.P = position;
 	Out.pos = float4(position, 1);
 	Out.clip = dot(Out.pos, GetCamera().clip_plane);
 	Out.pos = mul(GetCamera().view_projection, Out.pos);

@@ -88,12 +88,15 @@ namespace wi
 		float randomness = 0.2f;
 		float viewDistance = 200;
 		wi::vector<float> vertex_lengths;
+		float width = 1;
+		float uniformity = 1;
 
-		// Sprite sheet properties:
-		uint32_t framesX = 1;
-		uint32_t framesY = 1;
-		uint32_t frameCount = 1;
-		uint32_t frameStart = 0;
+		struct AtlasRect
+		{
+			XMFLOAT4 texMulAdd = XMFLOAT4(1, 1, 0, 0);
+			float size = 1;
+		};
+		wi::vector<AtlasRect> atlas_rects;
 
 		// Non-serialized attributes:
 		XMFLOAT4X4 world;
@@ -102,6 +105,7 @@ namespace wi
 		uint32_t layerMask = ~0u;
 		mutable bool regenerate_frame = true;
 		wi::graphics::Format position_format = wi::graphics::Format::R16G16B16A16_UNORM;
+		mutable bool must_rebuild_blas = true;
 
 		void Serialize(wi::Archive& archive, wi::ecs::EntitySerializer& seri);
 
@@ -112,5 +116,7 @@ namespace wi
 
 		constexpr bool IsDirty() const { return _flags & DIRTY; }
 		constexpr void SetDirty(bool value = true) { if (value) { _flags |= DIRTY; } else { _flags &= ~DIRTY; } }
+
+		void ConvertFromOLDSpriteSheet(uint32_t framesX, uint32_t framesY, uint32_t frameCount, uint32_t frameStart);
 	};
 }

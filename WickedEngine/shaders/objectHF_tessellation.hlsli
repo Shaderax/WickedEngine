@@ -112,12 +112,6 @@ PixelInput main(ConstantOutput input, float3 uvw : SV_DomainLocation, const Outp
 		input.b210 * ww3 * u + input.b120 * w * uu3 + input.b201 * ww3 * v + input.b021 * uu3 * v +
 		input.b102 * w * vv3 + input.b012 * u * vv3 + input.b111 * 6.0 * w * u * v;
 
-#ifdef OBJECTSHADER_USE_POSITIONPREV
-	output.pre.xyz = patch[0].pre.xyz * ww * w + patch[1].pre.xyz * uu * u + patch[2].pre.xyz * vv * v +
-		input.b210 * ww3 * u + input.b120 * w * uu3 + input.b201 * ww3 * v + input.b021 * uu3 * v +
-		input.b102 * w * vv3 + input.b012 * u * vv3 + input.b111 * 6.0 * w * u * v;
-#endif // OBJECTSHADER_USE_POSITIONPREV
-
 #ifdef OBJECTSHADER_USE_UVSETS
 	output.uvsets = w * patch[0].uvsets + u * patch[1].uvsets + v * patch[2].uvsets;
 #endif // OBJECTSHADER_USE_UVSETS
@@ -126,29 +120,18 @@ PixelInput main(ConstantOutput input, float3 uvw : SV_DomainLocation, const Outp
 	output.color = half4(w * patch[0].color + u * patch[1].color + v * patch[2].color);
 #endif // OBJECTSHADER_USE_COLOR
 
-#ifdef OBJECTSHADER_USE_ATLAS
-	output.atl = half2(w * patch[0].atl + u * patch[1].atl + v * patch[2].atl);
-#endif // OBJECTSHADER_USE_ATLAS
+#ifdef OBJECTSHADER_USE_COMMON
+	output.atl = w * patch[0].atl + u * patch[1].atl + v * patch[2].atl;
+	output.ao_wet = w * patch[0].ao_wet + u * patch[1].ao_wet + v * patch[2].ao_wet;
+#endif // OBJECTSHADER_USE_COMMON
 
 #ifdef OBJECTSHADER_USE_NORMAL
 	output.nor = normalize(w * patch[0].nor + u * patch[1].nor + v * patch[2].nor);
 #endif // OBJECTSHADER_USE_NORMAL
 
-#ifdef OBJECTSHADER_USE_AO
-	output.ao = half(w * patch[0].ao + u * patch[1].ao + v * patch[2].ao);
-#endif // OBJECTSHADER_USE_NORMAL
-
-#ifdef OBJECTSHADER_USE_WETMAP
-	output.wet = half(w * patch[0].wet + u * patch[1].wet + v * patch[2].wet);
-#endif // OBJECTSHADER_USE_WETMAP
-
 #ifdef OBJECTSHADER_USE_TANGENT
 	output.tan = half4(normalize(w * patch[0].tan + u * patch[1].tan + v * patch[2].tan));
 #endif // OBJECTSHADER_USE_TANGENT
-
-#ifdef OBJECTSHADER_USE_POSITION3D
-	output.pos3D = output.pos.xyz;
-#endif // OBJECTSHADER_USE_POSITION3D
 
 
 #ifdef OBJECTSHADER_USE_NORMAL
@@ -172,12 +155,6 @@ PixelInput main(ConstantOutput input, float3 uvw : SV_DomainLocation, const Outp
 #ifndef OBJECTSHADER_USE_NOCAMERA
 	output.pos = mul(GetCamera().view_projection, output.pos);
 #endif // OBJECTSHADER_USE_NOCAMERA
-
-#ifdef OBJECTSHADER_USE_POSITIONPREV
-#ifndef OBJECTSHADER_USE_NOCAMERA
-	output.pre = mul(GetCamera().previous_view_projection, output.pre);
-#endif // OBJECTSHADER_USE_NOCAMERA
-#endif // OBJECTSHADER_USE_POSITIONPREV
 
 	return output;
 }

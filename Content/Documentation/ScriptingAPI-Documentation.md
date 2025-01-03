@@ -110,6 +110,11 @@ This section describes the common tools for scripting which are not necessarily 
 - dobinaryfile(string filename) -- executes a binary LUA file
 - compilebinaryfile(string filename_src, dilename_dst) -- compiles a text LUA file (filename_src) into a binary LUA file (filename_dst)
 
+These are some helpers to aid in debugging:
+- IsThisEditor() : bool	-- returns true if current application is the editor, false otherwise
+- ReturnToEditor()	-- returns control to the editor and kills running scripts
+- IsThisDebugBuild() : bool	-- returns true if this is a debug build, false otherwise
+
 ## Engine Bindings
 The scripting API provides functions for the developer to manipulate engine behaviour or query it for information.
 
@@ -133,9 +138,9 @@ parent-child relationships between the scene hierarchy, updating the world, anim
 You can use the Renderer with the following functions, all of which are in the global scope:
 - GetGameSpeed() : float result
 - SetGameSpeed(float speed)
+- IsRaytracingSupported() : bool	-- check whether graphics device supports hardware accelerated ray tracing features
 - GetScreenWidth() : float result  -- (deprecated, use application.GetCanvas().GetLogicalWidth() instead)
 - GetScreenHeight() : float result  -- (deprecated, use application.GetCanvas().GetLogicalHeight() instead)
-- HairParticleSettings(opt int lod0, opt int lod1, opt int lod2)
 - SetShadowProps2D(int resolution)
 - SetShadowPropsCube(int resolution)
 - SetDebugPartitionTreeEnabled(bool enabled)
@@ -150,6 +155,8 @@ You can use the Renderer with the following functions, all of which are in the g
 - SetDebugCamerasEnabled(bool value)
 - SetVSyncEnabled(opt bool enabled)
 - SetOcclusionCullingEnabled(bool enabled)
+- SetTemporalAAEnabled(bool value)
+- SetRaytracedShadowsEnabled(bool value)
 - SetMeshShaderAllowed(bool enabled)
 - SetMeshletOcclusionCullingEnabled(bool value)
 - DrawLine(Vector origin,end, opt Vector color, opt bool depth = false)
@@ -167,6 +174,7 @@ You can use the Renderer with the following functions, all of which are in the g
 - DrawTrail(TrailRenderer trail) -- draws the trail in the debug rendering phase. TrailRenderer object must not be destroyed until then!
 - PaintIntoTexture(PaintTextureParams params)
 - CreatePaintableTexture(int width,height, opt int mips = 0, opt Vector initialColor = Vector()) -- creates a texture that can be used for destination of PaintIntoTexture()
+- PaintDecalIntoObjectSpaceTexture(PaintDecalParams params) -- paints into texture with an object's UV mapping, while projecting a texture by a decal matrix. This is a way to bake skinned decals at runtime.
 - PutWaterRipple(Vector position) -- put down a water ripple with default embedded asset
 - PutWaterRipple(string imagename, Vector position) -- put down water ripple texture from image asset file
 - ClearWorld(opt Scene scene) -- Clears the scene and the associated renderer resources. If parmaeter is not specified, it will clear the global scene
@@ -184,6 +192,14 @@ You can use the Renderer with the following functions, all of which are in the g
 - SetBrushSmoothness(float value)
 - SetBrushRotation(float value)
 - SetBrushShape(int value) -- 0 = circle, 1 = rectangle
+
+#### PaintDecalParams
+- [constructor]PaintDecalParams
+- SetInTexture(Texture tex) -- set source texture (decal tex)
+- SetOutTexture(Texture tex) -- set destination texture (object tex)
+- SetMatrix(Matrix mat) -- set decal matrix in world space
+- SetObject(Entity entity) -- set object entity, the positions and UVs will be taken from this
+- SetSlopeBlendPower(float power) -- adjust fading of the decal based on slope of surface compared to decal projection (default: 0, no slope blend)
 
 ### Sprite
 Render images on the screen.
@@ -385,6 +401,7 @@ Gives you the ability to render text with a custom font.
 - SetStyle(string fontstyle, opt int size = 16)
 - SetText(opt string text)
 - SetSize(int size)
+- SetScale(float scale)
 - SetPos(Vector pos)
 - SetSpacing(Vector spacing)
 - SetAlign(WIFALIGN Halign, opt WIFALIGN Valign)
@@ -409,6 +426,7 @@ Gives you the ability to render text with a custom font.
 - SetFlippedVertically(bool value) -- enable flipping the letters vertically
 - GetText() : string result
 - GetSize() : int result
+- GetScale() : float result
 - GetPos() : Vector result
 - GetSpacing() : Vector result
 - GetAlign() : WIFALIGN halign,valign
@@ -425,7 +443,7 @@ Gives you the ability to render text with a custom font.
 - IsFlippedVertically() : bool
 - TextSize() : Vector result -- returns text width and height in a Vector's X and Y components
 - SetTypewriterTime(float value) -- time to fully type the text in seconds (0: disable)
-- SetTypewriterLooped(bool value)) -- if true, typing starts over when finished
+- SetTypewriterLooped(bool value) -- if true, typing starts over when finished
 - SetTypewriterCharacterStart(int value) -- starting character for the animation
 - SetTypewriterSound(Sound sound, SoundInstance soundinstance) -- sound effect when new letter appears
 - ResetTypewriter() -- resets typewriter to first character
@@ -646,6 +664,8 @@ A four component floating point vector. Provides efficient calculations with SIM
 - QuaternionToRollPitchYaw(Vector quaternion) : Vector resultQuaternion
 - QuaternionSlerp(Vector quaternion1,quaternion2, float t) : Vector resultQuaternion
 - Slerp(Vector quaternion1,quaternion2, float t) : Vector resultQuaternion -- same as QuaternionSlerp
+- PlaneFromPointNormal(Vector point, normal) : constructs a plane from a point and a normal
+- PlaneFromPoints(Vector a,b,c) : constructs a plane from three points
 - GetAngle(Vector a,b,axis, opt float max_angle = math.pi * 2) : float result	-- computes the signed angle between two 3D vectors around specified axis
 
 ### Matrix
@@ -955,6 +975,10 @@ Describes an orientation in 3D space.
 - SetPosition(Vector value)	-- Sets the position of the camera. `UpdateCamera()` should be used after this to apply the value. 
 - SetLookDirection(Vector value)		-- Sets the look direction of the camera. The value must be a normalized direction `Vector`, relative to the camera position, and also perpendicular to the up direction. `UpdateCamera()` should be used after this to apply the value. This value will also be set if using the `TransformCamera()` function, from the transform's rotation.
 - SetUpDirection(Vector value)		-- Sets the up direction of the camera. This must be a normalized direction `Vector`, relative to the camera position, and also perpendicular to the look direction. `UpdateCamera()` should be used after this to apply the value. This value will also be set if using the `TransformCamera()` function, from the transform's rotation.
+- SetOrtho(bool value)	-- enable orthographic projection for the camera.
+- IsOrtho() : bool	-- returns true if the camera is using orthographic projection, false otherwise
+- GetOrthoVerticalSize() : float result
+- SetOrthoVerticalSize(float value)	-- Sets the vertical size of the camera in world space, used only in orthographic projection mode
 
 #### AnimationComponent
 - Timer : float
@@ -1032,6 +1056,8 @@ Describes an orientation in 3D space.
 - GetTextureUVSet(TextureSlot slot) : int uvset
 - SetCastShadow(bool value)
 - IsCastingShadow() : bool
+- SetCoplanarBlending(bool value)	-- force transparent material draw in opaque pass (useful for coplanar polygons)
+- IsCoplanarBlending() : bool
 
 ```lua
 TextureSlot = {
@@ -1195,6 +1221,8 @@ TextureSlot = {
 - IsNotVisibleInReflections() : bool
 - SetWetmapEnabled(bool value) -- enable wet map for the object, this will automatically track the wetness
 - IsWetmapEnabled() : bool
+- SetRenderable(bool value) -- can turn off rendering of an object
+- IsRenderable() : bool
 
 #### InverseKinematicsComponent
 Describes an Inverse Kinematics effector.
@@ -1327,6 +1355,19 @@ Describes a Weather
 - SetVolumetricClouds(bool value) -- Sets if weather is rendering volumetric clouds or not
 - SetHeightFog(bool value) -- Sets if weather is rendering height fog visual effect or not
 
+##### OceanParameters
+- dmap_dim : int
+- patch_length : float
+- time_scale : float
+- wave_amplitude : float
+- wind_dir : Vector
+- wind_speed : float
+- wind dependency : float
+- choppy_scale : float
+- waterColor : Vector
+- waterHeight : float
+- surfaceDisplacementTolerance : float
+
 #### SoundComponent
 Describes a Sound object.
 - Filename : string
@@ -1379,7 +1420,7 @@ Describes a Collider object.
 - SetOverrideBlink(int id, ExpressionOverride override)
 - SetOverrideLook(int id, ExpressionOverride override)
 
-
+```lua
 [outer] ExpressionPreset = {
 	Happy = 0,
 	Angry = 1,
@@ -1406,6 +1447,7 @@ Describes a Collider object.
 	Block = 1,
 	Blend = 2,
 }
+```
 
 
 #### HumanoidComponent
@@ -1421,6 +1463,7 @@ Describes a Collider object.
 - GetRagdollFatness() : float
 - GetRagdollHeadSize() : float
 
+```lua
 [outer] HumanoidBone = {
 	Hips = 0,	-- included in ragdoll
 	Spine = 1,	-- included in ragdoll
@@ -1480,6 +1523,7 @@ Describes a Collider object.
 
 	Count = 55
 }
+```
 
 
 #### DecalComponent
@@ -1606,6 +1650,7 @@ This is the main entry point and manages the lifetime of the application.
 - GetActivePath() : RenderPath? result
 - SetActivePath(RenderPath path, opt float fadeSeconds, opt int fadeColorR = 0, fadeColorG = 0, fadeColorB = 0)
 - SetFrameSkip(bool enabled)	-- enable/disable frame skipping in fixed update 
+- SetFullScreen(bool value)		-- switch to fullscreen/windowed
 - SetTargetFrameRate(float fps)	-- set target frame rate for fixed update and variable rate update when frame rate is locked
 - SetFrameRateLock(bool enabled)	-- if enabled, variable rate update will use a fixed delta time
 - SetInfoDisplay(bool active)	-- if enabled, information display will be visible in the top left corner of the application
@@ -1617,6 +1662,9 @@ This is the main entry point and manages the lifetime of the application.
 - SetPipelineCountDisplay(bool active)	-- toggle display of active graphics pipeline count if info display is enabled
 - SetHeapAllocationCountDisplay(bool active)	-- toggle display of heap allocation statistics if info display is enabled
 - SetVRAMUsageDisplay(bool active)	-- toggle display of video memory usage if info display is enabled
+- SetColorGradingHelper(bool value)	-- toggale color grading helper display in the top left corner
+- IsHDRSupported() : bool	-- returns whther HDR display output is supported on the current monitor
+- SetHDR(bool)	-- sets HDR display mode (if monitor supports it)
 - GetCanvas() : Canvas canvas  -- returns a copy of the application's current canvas
 - SetCanvas(Canvas canvas)  -- applies the specified canvas to the application
 - Exit() -- Closes the program
@@ -1658,6 +1706,7 @@ It inherits functions from RenderPath2D, so it can render a 2D overlay.
 	- AO_HBAO : int  -- enable horizon based screen space ambient occlusion (use in SetAO() function)
 	- AO_MSAO : int  -- enable multi scale screen space ambient occlusion (use in SetAO() function)
 - SetAOPower(float value)  -- applies AO power value if any AO is enabled
+- SetAORange(float value)	-- sets max range for ray traced AO
 - SetSSREnabled(bool value)
 - SetSSGIEnabled(bool value)
 - SetRaytracedDiffuseEnabled(bool value)
@@ -1668,7 +1717,6 @@ It inherits functions from RenderPath2D, so it can render a 2D overlay.
 - SetBloomEnabled(bool value)
 - SetBloomThreshold(bool value)
 - SetColorGradingEnabled(bool value)
-- SetColorGradingTexture(Texture value)
 - SetVolumeLightsEnabled(bool value)
 - SetLightShaftsEnabled(bool value)
 - SetLensFlareEnabled(bool value)
@@ -1683,6 +1731,7 @@ It inherits functions from RenderPath2D, so it can render a 2D overlay.
 - SetSharpenFilterEnabled(bool value)
 - SetSharpenFilterAmount(float value)
 - SetExposure(float value)
+- SetHDRCalibration(float value)
 - SetOutlineEnabled(bool value)
 - SetOutlineThreshold(float value)
 - SetOutlineThickness(float value)
@@ -1750,6 +1799,7 @@ A ray is defined by an origin Vector and a normalized direction Vector. It can b
 - Intersects(AABB aabb) : bool result
 - Intersects(Sphere sphere) : bool result
 - Intersects(Capsule capsule) : bool result
+- Intersects(Vector plane) : Vector result : intersects with a plane and returns intersection position or nans. Use `vector.PlaneFromPointNormal(Vector point, normal)` or `vector.PlaneFromPoints(Vector a,b,c)` to construct a plane.
 - GetOrigin() : Vector result
 - GetDirection() : Vector result
 - SetOrigin(Vector vector)
@@ -1821,7 +1871,7 @@ It's like two spheres connected by a cylinder. Base and Tip are the two endpoint
 
 ### Input
 Query input devices
-- [outer]input : Input
+- [outer]input : Input -- use this global object to access input functions
 - [void-constructor]Input()
 - Down(int code, opt int playerindex = 0) : bool result  -- Check whether a button is currently being held down
 - Press(int code, opt int playerindex = 0) : bool result  -- Check whether a button has just been pushed that wasn't before
@@ -1834,6 +1884,13 @@ Query input devices
 - GetAnalog(int type, opt int playerindex = 0) : Vector result  -- read analog data from gamepad. type parameter must be from GAMEPAD_ANALOG values
 - GetTouches() : Touch result[]
 - SetControllerFeedback(ControllerFeedback feedback, opt int playerindex = 0) -- sets controller feedback such as vibration or LED color
+- WhatIsPressed(opt int playerindex = 0) : int	-- returns 0 (`BUTTON_NONE`) if nothing is pressed, or the first appropriate button code otherwise
+- IsGamepadButton(int button) : bool 	-- returns whether that button code is a gamepad button or not
+- StringToButton(string str) : int	-- returns button code for a given string name
+- ButtonToString(int button, opt int preference = CONTROLLER_PREFERENCE_GENERIC) : string	-- returns string name for the given button code. You can set a preference for controller type which can modify the string returned
+- SetCursor(int cursor)	-- sets the current cursor type. Values can be of the cursor values, see below
+- SetCursorFromFile(int cursor, string filename)	-- sets the specified cursor type to an image from a cursor file
+- ResetCursor(int cursor)	-- resets the specified cursor to the default one
 
 #### ControllerFeedback
 Describes controller feedback such as touch and LED color which can be replayed on a controller
@@ -1899,12 +1956,21 @@ Describes a touch contact point
 - [outer]KEYBOARD_BUTTON_SUBTRACT		 : int
 - [outer]KEYBOARD_BUTTON_DECIMAL		 : int
 - [outer]KEYBOARD_BUTTON_DIVIDE			 : int
+- [outer]KEYBOARD_BUTTON_TAB			 : int
+- [outer]KEYBOARD_BUTTON_TILDE			 : int
+- [outer]KEYBOARD_BUTTON_INSERT			 : int
+- [outer]KEYBOARD_BUTTON_ALT			 : int
+- [outer]KEYBOARD_BUTTON_ALTGR			 : int
 - You can also generate a key code by calling string.byte(char uppercaseLetter) where the parameter represents the desired key of the keyboard
 
 #### Mouse Key Codes
 - [outer]MOUSE_BUTTON_LEFT	 : int
 - [outer]MOUSE_BUTTON_RIGHT	 : int
 - [outer]MOUSE_BUTTON_MIDDLE : int
+
+Helpers to check mouse wheel scrolling like buttons:
+- [outer]MOUSE_SCROLL_AS_BUTTON_UP 		: int
+- [outer]MOUSE_SCROLL_AS_BUTTON_DOWN 	: int
 
 #### Gamepad Key Codes
 - [outer]GAMEPAD_BUTTON_UP : int
@@ -1920,13 +1986,27 @@ Generic button codes:
 ...
 - [outer]GAMEPAD_BUTTON_14 : int
 
+Helpers to check analog sticks and triggers like buttons:
+- [outer]GAMEPAD_ANALOG_THUMBSTICK_L_AS_BUTTON_UP : int
+- [outer]GAMEPAD_ANALOG_THUMBSTICK_L_AS_BUTTON_LEFT	: int
+- [outer]GAMEPAD_ANALOG_THUMBSTICK_L_AS_BUTTON_DOWN	: int
+- [outer]GAMEPAD_ANALOG_THUMBSTICK_L_AS_BUTTON_RIGHT : int
+- [outer]GAMEPAD_ANALOG_THUMBSTICK_R_AS_BUTTON_UP : int
+- [outer]GAMEPAD_ANALOG_THUMBSTICK_R_AS_BUTTON_LEFT : int
+- [outer]GAMEPAD_ANALOG_THUMBSTICK_R_AS_BUTTON_DOWN : int
+- [outer]GAMEPAD_ANALOG_THUMBSTICK_R_AS_BUTTON_RIGHT : int
+- [outer]GAMEPAD_ANALOG_TRIGGER_L_AS_BUTTON : int
+- [outer]GAMEPAD_ANALOG_TRIGGER_R_AS_BUTTON : int
+
 Xbox button codes:
 - [outer]GAMEPAD_BUTTON_XBOX_X  : GAMEPAD_BUTTON_1
 - [outer]GAMEPAD_BUTTON_XBOX_A  : GAMEPAD_BUTTON_2
 - [outer]GAMEPAD_BUTTON_XBOX_B  : GAMEPAD_BUTTON_3
 - [outer]GAMEPAD_BUTTON_XBOX_Y  : GAMEPAD_BUTTON_4
 - [outer]GAMEPAD_BUTTON_XBOX_L1 : GAMEPAD_BUTTON_5
+- [outer]GAMEPAD_BUTTON_XBOX_LT : GAMEPAD_ANALOG_TRIGGER_L_AS_BUTTON
 - [outer]GAMEPAD_BUTTON_XBOX_R1 : GAMEPAD_BUTTON_6
+- [outer]GAMEPAD_BUTTON_XBOX_RT : GAMEPAD_ANALOG_TRIGGER_R_AS_BUTTON
 - [outer]GAMEPAD_BUTTON_XBOX_L3 : GAMEPAD_BUTTON_7
 - [outer]GAMEPAD_BUTTON_XBOX_R3 : GAMEPAD_BUTTON_8
 - [outer]GAMEPAD_BUTTON_XBOX_BACK : GAMEPAD_BUTTON_9
@@ -1938,7 +2018,9 @@ Playstation button codes:
 - [outer]GAMEPAD_BUTTON_PLAYSTATION_CIRCLE : GAMEPAD_BUTTON_3
 - [outer]GAMEPAD_BUTTON_PLAYSTATION_TRIANGLE : GAMEPAD_BUTTON_4
 - [outer]GAMEPAD_BUTTON_PLAYSTATION_L1 : GAMEPAD_BUTTON_5
+- [outer]GAMEPAD_BUTTON_PLAYSTATION_L2 : GAMEPAD_ANALOG_TRIGGER_L_AS_BUTTON
 - [outer]GAMEPAD_BUTTON_PLAYSTATION_R1 : GAMEPAD_BUTTON_6
+- [outer]GAMEPAD_BUTTON_PLAYSTATION_R2 : GAMEPAD_ANALOG_TRIGGER_R_AS_BUTTON
 - [outer]GAMEPAD_BUTTON_PLAYSTATION_L3 : GAMEPAD_BUTTON_7
 - [outer]GAMEPAD_BUTTON_PLAYSTATION_R3 : GAMEPAD_BUTTON_8
 - [outer]GAMEPAD_BUTTON_PLAYSTATION_SHARE : GAMEPAD_BUTTON_9
@@ -1949,6 +2031,23 @@ Playstation button codes:
 - [outer]GAMEPAD_ANALOG_THUMBSTICK_R : int
 - [outer]GAMEPAD_ANALOG_TRIGGER_L : int
 - [outer]GAMEPAD_ANALOG_TRIGGER_R : int
+
+#### Controller preference
+- [outer]CONTROLLER_PREFERENCE_GENERIC : int
+- [outer]CONTROLLER_PREFERENCE_PLAYSTATION : int
+- [outer]CONTROLLER_PREFERENCE_XBOX : int
+
+#### Cursor codes:
+- [outer]CURSOR_DEFAULT : int
+- [outer]CURSOR_TEXTINPUT : int
+- [outer]CURSOR_RESIZEALL : int
+- [outer]CURSOR_RESIZE_NS : int
+- [outer]CURSOR_RESIZE_EW : int
+- [outer]CURSOR_RESIZE_NESW : int
+- [outer]CURSOR_RESIZE_NWSE : int
+- [outer]CURSOR_HAND : int
+- [outer]CURSOR_NOTALLOWED : int
+- [outer]CURSOR_CROSS : int
 
 
 ### Physics

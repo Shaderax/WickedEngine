@@ -2,6 +2,7 @@
 #include "CommonInclude.h"
 #include "wiGraphicsDevice.h"
 #include "wiVector.h"
+#include "wiPlatform.h"
 
 #include <string>
 #include <functional>
@@ -79,7 +80,7 @@ namespace wi::helper
 
 	std::string RemoveExtension(const std::string& filename);
 
-	std::string GetPathRelative(const std::string& rootdir, std::string& path);
+	std::string GetPathRelative(const std::string& rootdir, const std::string& path);
 
 	void MakePathRelative(const std::string& rootdir, std::string& path);
 
@@ -177,4 +178,7 @@ namespace wi::helper
 
 	// Returns a good looking timer duration text as either milliseconds, seconds, minutes or hours
 	std::string GetTimerDurationText(float timerSeconds);
+
+	// Get error message from platform-specific error code, for example HRESULT on windows
+	std::string GetPlatformErrorString(wi::platform::error_type code);
 };
